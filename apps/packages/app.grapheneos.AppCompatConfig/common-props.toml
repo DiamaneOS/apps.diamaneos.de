@@ -1,6 +1,6 @@
 signatures = ["e5044303e85b4cceaae00ecf8823c9c6f937a8e3a2fb632ec9fa45b2c33b4bd1"]
 source = "GrapheneOS"
-hasFsVeritySignatures = true
+hasFsVeritySignatures = false
 
 isTopLevel = false
 
