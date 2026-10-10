@@ -1,6 +1,7 @@
 *.der
 *.fsv_sig
 *.json
+!/UPSTREAM.json
 *.pem
 *.sig
 *.sjson
