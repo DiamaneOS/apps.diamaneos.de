@@ -1,53 +1,19 @@
 #!/bin/bash
-
 set -o errexit -o nounset -o pipefail
+
+transport=${DIAMANEOS_PUBLICATION_TRANSPORT:?Set the publication transport executable}
+if [[ $transport != /* || ! -f $transport || ! -x $transport || ! -O $transport || -L $transport ]] ||
+        [[ -n $(find "$transport" \( -perm -020 -o -perm -002 \) -print) ]]; then
+    echo 'Publication transport must be an absolute, protected executable.' >&2
+    exit 2
+fi
 
 touch lock
 exec {fd}< lock
-if ! flock -n $fd; then
-    echo already processing/deploying static files >&2
+if ! flock -n "$fd"; then
+    echo 'Application catalog is locked.' >&2
     exit 1
 fi
 
-./process-static $fd
-
-. servers.sh
-
-deploy() {
-    set -o errexit -o nounset -o pipefail
-
-    local server=$1
-    echo $server
-
-    local remote=root@$server
-    local active
-    active=$(ssh $remote readlink /srv/apps.grapheneos.org)
-
-    if [[ $active = /srv/apps.grapheneos.org_a ]]; then
-        local target=/srv/apps.grapheneos.org_b
-    else
-        local target=/srv/apps.grapheneos.org_a
-    fi
-
-    echo active is $active
-    echo target is $target
-    echo
-
-    ssh $remote "rm -rf $target && cp -a $active $target"
-    rsync -rptv --chmod=D755,F644 --progress --delete --fsync --preallocate static-tmp/ $remote:$target
-    ssh $remote "ln -snf $target /srv/apps.grapheneos.org && sync /srv/apps.grapheneos.org"
-
-    echo "root $target;" > $server.root_apps.grapheneos.org.conf
-    rsync -pcv --chmod=644 --fsync --preallocate $server.root_apps.grapheneos.org.conf $remote:/etc/nginx/root_apps.grapheneos.org.conf
-    rm $server.root_apps.grapheneos.org.conf
-    ssh $remote systemctl reload nginx
-
-    echo
-    echo active is now $target
-    echo
-}
-
-rm -f logs/*.log
-export -f deploy
-parallel "deploy {} >logs/{}.log 2>&1" ::: "${servers[@]}"
-tail -n +1 logs/*.log
+./process-static "$fd"
+"$transport" apps-publish "$PWD/static-tmp"
