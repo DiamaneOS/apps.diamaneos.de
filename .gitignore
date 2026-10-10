@@ -11,5 +11,9 @@
 /gmscompat-apps/
 /lock
 /logs/
-/*.root_apps.grapheneos.org.conf
+/*.root_apps.diamaneos.de.conf
 /static-tmp/
+
+hosts.private.sh
+
+servers.private.sh
