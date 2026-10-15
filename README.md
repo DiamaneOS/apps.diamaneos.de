@@ -2,7 +2,7 @@
 
 The catalog of apps.diamaneos.de, made with GrapheneOS's generator.
 
-- Our App Store, Auditor and Camera (source `DiamaneOS` in the inventory) are our builds, signed with our app keys.
+- Our App Store and Camera (source `DiamaneOS` in the inventory) are our builds, signed with our app keys.
 - Every other listed app is mirrored from GrapheneOS's repository and keeps its publisher's signature.
 - Our catalog key signs the catalog. It is separate from the app keys, and the App Store trusts only this key.
 
