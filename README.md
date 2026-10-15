@@ -1,9 +1,23 @@
-# DiamaneOS application repository
+# DiamaneOS app repository
 
-Tools for generating signed application catalogs and publishing their package files. Unmodified applications retain their publisher signatures; repository metadata has a separate verification key.
+The catalog of apps.diamaneos.de, made with GrapheneOS's generator.
 
-`generate.py` produces the catalog using the package inventory and repository key. `deploy-static` publishes the generated tree to explicitly configured targets. Package versions referenced by signed catalogs remain available across tree switches.
+- Our App Store, Auditor and Camera (source `DiamaneOS` in the inventory) are our builds, signed with our app keys.
+- Every other listed app is mirrored from GrapheneOS's repository and keeps its publisher's signature.
+- Our catalog key signs the catalog. It is separate from the app keys, and the App Store trusts only this key.
 
-Metadata uses the upstream signed-envelope format. APK signing certificates and APK signature scheme v4 remain independent of catalog authentication. Key generation and signing material are separate from the public serving tree.
+## Building a catalog
 
-Source provenance and deployment details are described in [DOWNSTREAM.md](DOWNSTREAM.md).
+1. `./mirror.py WORK` copies the inventory and scripts into a work tree and fetches GrapheneOS's catalog, checked with `grapheneos-apps.0.pub`. It downloads the listed apps for arm64-v8a and checks each file against the catalog's SHA-256 and sizes.
+2. In WORK, `./import-apks.py` adds our builds. Set each version's channel in its `channel.toml`.
+3. In WORK, `./generate.py` writes the catalog and checks every APK's signer against the inventory. It signs with `apps.0.sec` when that key is in WORK.
+4. `./mirror.py --check WORK` confirms that the mirrored apps are listed exactly as GrapheneOS lists them.
+5. `deploy-static` in WORK publishes the tree.
+
+## Review
+
+- A package GrapheneOS adds, or one whose signers or properties change, is held in `WORK/held.json`. It is listed only after its inventory entry is added or updated.
+- New versions of listed packages are mirrored without review, in GrapheneOS's channels. Versions GrapheneOS drops stay as channel `old`.
+- Versions come from GrapheneOS's signed catalog. The inherited version files under `apps/packages/*/<version>/` are not read.
+
+Source provenance and deployment: [DOWNSTREAM.md](DOWNSTREAM.md).
