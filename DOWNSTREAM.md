@@ -1,11 +1,9 @@
 # Application repository boundaries
 
-Upstream provenance is recorded in [UPSTREAM.json](UPSTREAM.json). The upstream MIT license is retained in [LICENSE](LICENSE).
-
-The upstream generator produces signed catalog metadata. Packages retain their own signing identities; catalog authentication does not replace APK signature verification. Package selection comes from the inventory used for generation.
-
-The publisher invokes an externally configured transport after catalog generation. Publication preserves package versions referenced by current and previous signed catalogs. Serving roots contain verified artifacts and signed metadata, not release-signing private keys.
-
-`deploy-static` calls the protected executable selected by `DIAMANEOS_PUBLICATION_TRANSPORT`. Authentication, target selection and remote installation belong to that transport.
-
-The inherited package inventory describes upstream applications. DiamaneOS builds and their application identities require matching inventory entries. The Debian deployment entry point is [DiamaneOS/infrastructure](https://github.com/DiamaneOS/infrastructure/tree/main/debian).
+- Upstream provenance is in [UPSTREAM.json](UPSTREAM.json). The upstream MIT license is kept in [LICENSE](LICENSE).
+- `mirror.py` and `grapheneos-apps.0.pub` are DiamaneOS additions. The key is GrapheneOS's catalog key, taken from its App Store source.
+- Packages keep their own signing identities. Catalog authentication does not replace APK signature checks.
+- The inventory turns off legacy fs-verity sidecars. Android 17 uses APK Signature Scheme v4 sidecars when supplied, alongside the APK's own signature and the catalog's hashes.
+- Publication keeps the package versions that current and previous signed catalogs list. Serving roots hold verified files and signed metadata, never private keys.
+- `deploy-static` calls the protected executable named by `DIAMANEOS_PUBLICATION_TRANSPORT`, which handles authentication, targets and remote installation.
+- The Debian deployment entry point is [DiamaneOS/infrastructure](https://github.com/DiamaneOS/infrastructure/tree/main/debian).
