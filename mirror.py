@@ -9,6 +9,7 @@ builds and never mirrored. Every other listed package is mirrored for arm64-v8a 
 catalog, checked against its signature (grapheneos-apps.0.pub) and its SHA-256 and sizes. A package
 that is not in the inventory, or whose signers or properties differ from it, is held for review in
 WORK/held.json. Versions GrapheneOS no longer lists stay as channel "old", as GrapheneOS keeps them.
+Packages in EXCLUDED are never listed, whatever GrapheneOS's catalog says about them.
 """
 
 import gzip
@@ -32,6 +33,8 @@ DERIVED = {"versionCode", "apks", "apkHashes", "apkSizes", "apkGzSizes", "apkBrS
            "label", "minSdk", "abis", "hasV4Signatures", "channel"}
 # Package properties the inventory sets for itself.
 OWN_PROPS = {"variants", "signatures", "source", "description", "iconType", "hasFsVeritySignatures"}
+# GrapheneOS's own apps that do not belong in our catalog. Info shows GrapheneOS's release news.
+EXCLUDED = {"app.grapheneos.info"}
 
 
 def fetch(path, limit):
@@ -75,6 +78,8 @@ def load_inventory():
     for name in sorted(os.listdir(packages_dir)):
         with open(os.path.join(packages_dir, name, "common-props.toml"), "rb") as f:
             inventory[name] = tomllib.load(f)
+    if EXCLUDED & set(inventory):
+        raise Exception("excluded packages in the inventory: " + ", ".join(sorted(EXCLUDED & set(inventory))))
     return inventory
 
 
@@ -210,7 +215,7 @@ def mirror(work):
     catalog = verified_catalog(work)
     held, total, loaded = [], 0, 0
     for name, package in sorted(catalog["packages"].items()):
-        if inventory.get(name, {}).get("source") == "DiamaneOS":
+        if name in EXCLUDED or inventory.get(name, {}).get("source") == "DiamaneOS":
             continue
         reason = hold_reason(name, package, inventory)
         if reason:
@@ -236,6 +241,9 @@ def check(work):
         held = {entry["package"] for entry in json.load(f)}
     problems = []
     for name, package in ours.items():
+        if name in EXCLUDED:
+            problems.append(name + " is excluded but listed")
+            continue
         if package["source"] == "DiamaneOS":
             continue
         theirs = upstream.get(name)

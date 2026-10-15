@@ -21,5 +21,6 @@ The scripts need signify, apksigner and aapt2 from build tools 37 (generate.py r
 - A package GrapheneOS adds, or one whose signers or properties change, is held in `WORK/held.json`. It is listed only after its inventory entry is added or updated.
 - New versions of listed packages are mirrored without review, in GrapheneOS's channels. Versions GrapheneOS drops stay as channel `old`.
 - Versions come from GrapheneOS's signed catalog. The inherited version files under `apps/packages/*/<version>/` are not read.
+- `EXCLUDED` in `mirror.py` names GrapheneOS packages we never list, whatever GrapheneOS's catalog says: its Info app, which shows GrapheneOS's release news.
 
 Source provenance and deployment: [DOWNSTREAM.md](DOWNSTREAM.md).
