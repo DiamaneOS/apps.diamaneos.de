@@ -1,6 +1,6 @@
 # DiamaneOS application repository
 
-Tools for generating signed application catalogs and publishing their package files. Unmodified applications retain their publisher signatures; repository metadata has a separate verification key.
+Tools for generating signed application catalogs and publishing their package files. Unmodified applications retain their publisher signatures. Repository metadata has a separate verification key.
 
 `generate.py` produces the catalog using the package inventory and repository key. `deploy-static` publishes the generated tree to explicitly configured targets. Package versions referenced by signed catalogs remain available across tree switches.
 

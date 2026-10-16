@@ -2,7 +2,7 @@
 
 Upstream provenance is recorded in [UPSTREAM.json](UPSTREAM.json). The upstream MIT license is retained in [LICENSE](LICENSE).
 
-The upstream generator produces signed catalog metadata. Packages retain their own signing identities; catalog authentication does not replace APK signature verification. Package selection comes from the inventory used for generation.
+The upstream generator produces signed catalog metadata. Packages retain their own signing identities. Catalog authentication does not replace APK signature verification. Package selection comes from the inventory used for generation.
 
 The package inventory disables legacy fs-verity sidecar generation. Android 17 uses APK Signature Scheme v4 sidecars when supplied, alongside the APK's own signature and the authenticated catalog's hashes.
 
