@@ -1,26 +1,26 @@
 # DiamaneOS app repository
 
-The catalog of apps.diamaneos.de, made with GrapheneOS's generator.
+apps.diamaneos.de serves two signed catalogs. The App Store checks each with its own key, and a package can come from only one of them.
 
-- Our App Store and Camera (source `DiamaneOS` in the inventory) are our builds, signed with our app keys.
-- Every other listed app is mirrored from GrapheneOS's repository and keeps its publisher's signature.
-- Our catalog key signs the catalog. It is separate from the app keys, and the App Store trusts only this key.
+- Our catalog (`metadata.1.0.sjson`), made with GrapheneOS's generator and signed with our offline catalog key. It lists only our App Store, Camera and Auditor (source `DiamaneOS`), signed with our app keys.
+- GrapheneOS's catalog (`grapheneos/metadata.1.0.sjson`), served unchanged with its APKs. The App Store checks it with GrapheneOS's catalog key and takes only GrapheneOS's packages from it, without our packages, GrapheneOS's Info app (its release news) and GrapheneOS's Auditor.
 
-## Building a catalog
+## Building our catalog
 
 The scripts need signify, apksigner and aapt2 from build tools 37 (generate.py reads apksigner's newer output), zopfli, brotli and GNU parallel.
 
-1. `./mirror.py WORK` copies the inventory and scripts into a work tree and fetches GrapheneOS's catalog, checked with `grapheneos-apps.0.pub`. It downloads the listed apps for arm64-v8a and checks each file against the catalog's SHA-256 and sizes.
-2. In WORK, `./import-apks.py` adds our builds. Set each version's channel in its `channel.toml`.
+1. `./prepare.py WORK` copies our inventory (`apps/packages`), the scripts and static files into a work tree.
+2. In WORK, `./import-apks.py` adds our signed builds. Set each version's channel in its `channel.toml`.
 3. In WORK, `./generate.py` writes the catalog and checks every APK's signer against the inventory. It signs with `apps.0.sec` when that key is in WORK.
-4. `./mirror.py --check WORK` confirms that the mirrored apps are listed exactly as GrapheneOS lists them.
+4. `./prepare.py --check WORK` confirms that the catalog lists exactly our packages with their signers.
 5. `deploy-static` in WORK publishes the tree.
 
-## Review
+## GrapheneOS's catalog
 
-- A package GrapheneOS adds, or one whose signers or properties change, is held in `WORK/held.json`. It is listed only after its inventory entry is added or updated.
-- New versions of listed packages are mirrored without review, in GrapheneOS's channels. Versions GrapheneOS drops stay as channel `old`.
-- Versions come from GrapheneOS's signed catalog. The inherited version files under `apps/packages/*/<version>/` are not read.
-- `EXCLUDED` in `mirror.py` names GrapheneOS packages we never list, whatever GrapheneOS's catalog says: its Info app, which shows GrapheneOS's release news.
+`grapheneos-mirror.py ROOT STATE` runs on each server from `systemd/diamaneos-grapheneos-mirror.timer`, without any key. It fetches GrapheneOS's catalog and checks its signature (`grapheneos-apps.0.pub`) and that it is not older than the published one. It then fetches every APK the App Store may take from it for arm64-v8a and checks each against the catalog's sizes and SHA-256, and only then publishes the catalog bytes. Files that neither the current nor the previous catalog lists are removed.
+
+Packages whose signers or properties differ from `grapheneos/reviewed.json`, new packages and dropped ones are listed in `STATE/review.json` and the job's log. They are published anyway, as GrapheneOS's key is trusted for them. Review them and update `reviewed.json`.
+
+Run the tests with `python3 -m unittest discover -s tests` (Python 3.11 or newer).
 
 Source provenance and deployment: [DOWNSTREAM.md](DOWNSTREAM.md).
