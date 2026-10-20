@@ -1,13 +1,17 @@
 """prepare.py: our catalog's work tree holds only our packages, and --check refuses anything else."""
+import base64
 import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / 'tests'))
+import test_grapheneos_mirror as t  # noqa: E402  (test key and signify stand-in)
 
 
 def load():
@@ -22,6 +26,13 @@ class PrepareTests(unittest.TestCase):
         self.prepare = load()
         self.work = Path(tempfile.mkdtemp(prefix='apps-prepare-'))
         self.addCleanup(shutil.rmtree, self.work)
+        fake = self.work / 'signify-openbsd'
+        fake.write_text(t.SIGNIFY.format(python=sys.executable, tests=str(REPO / 'tests')))
+        fake.chmod(0o755)
+        self.prepare.SIGNIFY = str(fake)
+        self.key = self.work / 'apps.0.pub'
+        self.key.write_text('untrusted comment: test key\n'
+                            + base64.b64encode(b'Ed' + t.KEYNUM + t.ed25519.public_key(t.SECRET)).decode() + '\n')
 
     def test_inventory_is_our_three_apps_with_their_release_signers(self):
         inventory = self.prepare.load_inventory()
@@ -39,9 +50,13 @@ class PrepareTests(unittest.TestCase):
         self.assertTrue((self.work / 'apps/packages/app.grapheneos.camera/9304').is_dir())
         self.assertTrue((self.work / 'generate.py').is_file())
 
-    def write(self, packages):
+    def write(self, packages, secret=t.SECRET):
         (self.work / 'apps').mkdir(exist_ok=True)
-        (self.work / 'apps/metadata.1.json').write_text(json.dumps({'time': 1, 'packages': packages}))
+        body = json.dumps({'time': 1, 'packages': packages}).encode()
+        signature = base64.b64encode(b'Ed' + t.KEYNUM + t.ed25519.sign(secret, body))
+        (self.work / 'apps/metadata.1.0.sjson').write_bytes(body + b'\n' + signature + b'\n')
+        # The unsigned copy is not what phones read.
+        (self.work / 'apps/metadata.1.json').write_text(json.dumps({'time': 1, 'packages': self.ours()}))
 
     def ours(self):
         return {n: {'source': 'DiamaneOS', 'signatures': p['signatures'], 'variants': {}}
@@ -49,7 +64,12 @@ class PrepareTests(unittest.TestCase):
 
     def test_check_accepts_our_catalog(self):
         self.write(self.ours())
-        self.prepare.check(str(self.work))
+        self.prepare.check(str(self.work), str(self.key))
+
+    def test_check_refuses_a_catalog_signed_by_another_key(self):
+        self.write(self.ours(), secret=b'\x01' * 32)
+        with self.assertRaises(SystemExit):
+            self.prepare.check(str(self.work), str(self.key))
 
     def test_check_refuses_other_packages_and_signers(self):
         for change in ('other', 'signer', 'source', 'renamed'):
@@ -64,7 +84,7 @@ class PrepareTests(unittest.TestCase):
                 packages['app.grapheneos.apps']['originalPackage'] = 'org.example'
             self.write(packages)
             with self.assertRaises(SystemExit, msg=change):
-                self.prepare.check(str(self.work))
+                self.prepare.check(str(self.work), str(self.key))
 
 
 if __name__ == '__main__':

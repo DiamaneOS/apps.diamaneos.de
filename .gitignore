@@ -2,7 +2,6 @@
 *.fsv_sig
 *.json
 !/UPSTREAM.json
-!/grapheneos/reviewed.json
 *.pem
 *.sig
 *.sjson
