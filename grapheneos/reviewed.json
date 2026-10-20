@@ -1,0 +1,206 @@
+{
+ "app.accrescent.client": {
+  "iconType": "webp",
+  "optOutOfBulkUpdates": true,
+  "requestUpdateOwnership": false,
+  "signatures": [
+   "067a40c4193aad51ac87f9ddfdebb15e24a1850babfa4821c28c5c25c3fdc071"
+  ],
+  "source": "Mirror",
+  "staticDeps": [
+   "app.grapheneos.apps >= 24"
+  ]
+ },
+ "app.grapheneos.AppCompatConfig": {
+  "hasFsVeritySignatures": true,
+  "isTopLevel": false,
+  "noCode": true,
+  "signatures": [
+   "e5044303e85b4cceaae00ecf8823c9c6f937a8e3a2fb632ec9fa45b2c33b4bd1"
+  ],
+  "source": "GrapheneOS",
+  "staticDeps": [
+   "app.grapheneos.AppCompatConfig >= 1"
+  ]
+ },
+ "app.grapheneos.gmscompat.config": {
+  "hasFsVeritySignatures": true,
+  "isTopLevel": false,
+  "noCode": true,
+  "packagesAllowedToTriggerUpdate": [
+   "app.grapheneos.gmscompat"
+  ],
+  "signatures": [
+   "6ebb65c5daa95641f7a774ea35d26ff251575cb32e34a8a5d655b2742b57321f"
+  ],
+  "source": "GrapheneOS",
+  "staticDeps": [
+   "app.grapheneos.gmscompat >= 1000"
+  ]
+ },
+ "app.grapheneos.gmscompat.lib": {
+  "hasFsVeritySignatures": true,
+  "isTopLevel": false,
+  "signatures": [
+   "cb3687797edbb8a28631eb725b650a8b4a5879ea47e6220a35cef157c9829429"
+  ],
+  "source": "GrapheneOS"
+ },
+ "app.grapheneos.pdfviewer": {
+  "hasFsVeritySignatures": true,
+  "iconType": "webp",
+  "originalPackage": "org.grapheneos.pdfviewer",
+  "signatures": [
+   "eea4b37d46e361ce2583e1f59859db9e784d456425ff40fe6cf75d90f6a968e0"
+  ],
+  "source": "GrapheneOS"
+ },
+ "app.grapheneos.speechservices": {
+  "hasFsVeritySignatures": true,
+  "signatures": [
+   "e4ed212b02b55bc33464938df68d04f60dff04dd3ac982b8b8240441e05f1b2f"
+  ],
+  "source": "GrapheneOS"
+ },
+ "app.vanadium.browser": {
+  "deps2": [
+   "app.vanadium.config 0 SkipIfMissing"
+  ],
+  "group": "Vanadium",
+  "hasFsVeritySignatures": true,
+  "iconType": "webp",
+  "originalPackage": "org.chromium.chrome",
+  "signatures": [
+   "c6adb8b83c6d4c17d292afde56fd488a51d316ff8f2c11c5410223bff8a7dbb3"
+  ],
+  "source": "GrapheneOS",
+  "staticDeps": [
+   "app.vanadium.browser >= 548106100",
+   "app.grapheneos.apps >= 22"
+  ]
+ },
+ "app.vanadium.config": {
+  "group": "Vanadium",
+  "hasFsVeritySignatures": true,
+  "isTopLevel": false,
+  "noIcon": true,
+  "showAutoUpdateNotifications": false,
+  "signatures": [
+   "c6adb8b83c6d4c17d292afde56fd488a51d316ff8f2c11c5410223bff8a7dbb3"
+  ],
+  "source": "GrapheneOS",
+  "staticDeps": [
+   "app.vanadium.webview >= 548106100"
+  ]
+ },
+ "app.vanadium.webview": {
+  "deps2": [
+   "app.vanadium.config 0 SkipIfMissing"
+  ],
+  "group": "Vanadium",
+  "hasFsVeritySignatures": true,
+  "isTopLevel": false,
+  "noIcon": true,
+  "signatures": [
+   "c6adb8b83c6d4c17d292afde56fd488a51d316ff8f2c11c5410223bff8a7dbb3"
+  ],
+  "source": "GrapheneOS",
+  "staticDeps": [
+   "app.vanadium.webview >= 548106100"
+  ]
+ },
+ "com.android.messaging": {
+  "hasFsVeritySignatures": true,
+  "iconType": "webp",
+  "signatures": [
+   "f79e5f0ec0a0855efd2027e05eb9ec9c196d5d047940be603576e530867c3845"
+  ],
+  "source": "GrapheneOS",
+  "staticDeps": [
+   "com.android.messaging >= 10001044"
+  ]
+ },
+ "com.android.vending": {
+  "deps": [
+   "com.google.android.gms"
+  ],
+  "iconType": "webp",
+  "signatures": [
+   "7ce83c1b71f3d572fed04c8d40c5cb10ff75e6d87d9df6fbd53f0468c2905053"
+  ],
+  "source": "Google",
+  "staticDeps": [
+   "app.grapheneos.gmscompat >= 1000"
+  ]
+ },
+ "com.google.android.apps.pixel.health": {
+  "iconType": "webp",
+  "requiredSystemFeatures": [
+   "com.google.android.feature.FIR.PROXIMITY"
+  ],
+  "signatures": [
+   "295499d8d0e93b7ed64f90e8cddffc12e3be23d8806f54e05d1abf415c37f5ba"
+  ],
+  "source": "Google",
+  "staticDeps": [
+   "app.grapheneos.apps >= 23"
+  ]
+ },
+ "com.google.android.gms": {
+  "deps": [
+   "com.google.android.gsf",
+   "com.android.vending"
+  ],
+  "deps2": [
+   "app.grapheneos.gmscompat.lib 0 SkipIfMissing",
+   "app.grapheneos.gmscompat.config",
+   "com.google.android.gsf 0 SkipIfMissing",
+   "com.android.vending"
+  ],
+  "iconType": "webp",
+  "signatures": [
+   "7ce83c1b71f3d572fed04c8d40c5cb10ff75e6d87d9df6fbd53f0468c2905053",
+   "5f2391277b1dbd489000467e4c2fa6af802430080457dce2f618992e9dfb5402"
+  ],
+  "source": "Google",
+  "staticDeps": [
+   "app.grapheneos.gmscompat >= 1000"
+  ]
+ },
+ "com.google.android.gsf": {
+  "deps": [
+   "app.grapheneos.gmscompat.config"
+  ],
+  "iconType": "webp",
+  "isTopLevel": false,
+  "signatures": [
+   "7ce83c1b71f3d572fed04c8d40c5cb10ff75e6d87d9df6fbd53f0468c2905053"
+  ],
+  "source": "Google",
+  "staticDeps": [
+   "app.grapheneos.gmscompat >= 1000",
+   "android < 35"
+  ]
+ },
+ "com.google.android.markup": {
+  "iconType": "webp",
+  "signatures": [
+   "ba835740b0898dbb0ffdcb00f53f9c90d3194b64c39a5588478f9a1aad79144f"
+  ],
+  "source": "Google"
+ },
+ "com.google.android.projection.gearhead": {
+  "deps": [
+   "com.google.android.gms"
+  ],
+  "iconType": "webp",
+  "signatures": [
+   "1ca8dcc0bed3cbd872d2cb791200c0292ca9975768a82d676b8b424fb65b5295"
+  ],
+  "source": "Google",
+  "staticDeps": [
+   "app.grapheneos.gmscompat >= 1007",
+   "android >= 34"
+  ]
+ }
+}

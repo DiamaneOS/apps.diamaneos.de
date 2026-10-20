@@ -1,0 +1,25 @@
+# The shared sandbox is diamaneos-.service.d/10-hardening.conf (DiamaneOS/infrastructure).
+[Unit]
+Description=Mirror GrapheneOS's signed app catalog for apps.diamaneos.de/grapheneos/
+After=network-online.target diamaneos-egress.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=diamaneos-apps-mirror
+Group=diamaneos-apps-mirror
+ExecStart=/usr/bin/python3 -I -B /opt/diamaneos-apps-mirror/grapheneos-mirror.py /srv/apps.diamaneos.de-grapheneos/grapheneos /var/lib/diamaneos-apps-mirror
+StateDirectory=diamaneos-apps-mirror
+StateDirectoryMode=0700
+ReadWritePaths=/srv/apps.diamaneos.de-grapheneos/grapheneos
+UMask=0022
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProcSubset=pid
+RemoveIPC=yes
+Nice=10
+IOSchedulingClass=idle
+CPUWeight=20
+MemoryMax=512M
+TasksMax=16
+LimitNOFILE=256
+TimeoutStartSec=3h

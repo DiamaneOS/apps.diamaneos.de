@@ -2,6 +2,7 @@
 *.fsv_sig
 *.json
 !/UPSTREAM.json
+!/grapheneos/reviewed.json
 *.pem
 *.sig
 *.sjson
@@ -18,3 +19,4 @@
 hosts.private.sh
 
 servers.private.sh
+__pycache__/

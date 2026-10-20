@@ -1,9 +1,0 @@
-signatures = ["7ce83c1b71f3d572fed04c8d40c5cb10ff75e6d87d9df6fbd53f0468c2905053"]
-source = "Google"
-
-staticDeps = ["app.grapheneos.gmscompat >= 1000"]
-deps = ["com.google.android.gms"]
-
-description = """
-Official release of the Google Play Store without modifications. On GrapheneOS, it runs as a regular sandboxed app with no special access or privileges thanks to our sandboxed Google Play compatibility layer. The lack of any of the extensive standard privileged integration into the OS and the compatibility layer teaching it how to function that way are what makes it sandboxed Google Play.
-"""
