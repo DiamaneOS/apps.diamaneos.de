@@ -360,6 +360,8 @@ class MirrorTests(unittest.TestCase):
         module = importlib.util.module_from_spec(prepare)
         prepare.loader.exec_module(module)
         self.assertEqual(module.OURS, self.mirror.OURS)
+        floor = re.search(r'DiamaneOS\(BuildConfig\.REPO_PUBLIC_KEY, [^)]*, ([0-9_]+)L\)', text)
+        self.assertEqual(int(floor[1].replace('_', '')), module.MIN_TIME)
 
 if __name__ == '__main__':
     unittest.main()

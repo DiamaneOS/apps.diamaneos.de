@@ -20,8 +20,11 @@ import tomllib
 
 REPO = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = ["generate.py", "compress-apks", "process-static", "import-apks.py"]
-# OpenBSD's signify, as generate.py uses it. Debian names it signify-openbsd.
-SIGNIFY = shutil.which("signify-openbsd") or "signify"
+# Debian's OpenBSD signify. Debian's plain signify is an unrelated mail tool.
+SIGNIFY = "/usr/bin/signify-openbsd"
+# The App Store refuses an older catalog of ours on a phone without one (Catalog.DiamaneOS.minTimestamp
+# in Catalogs.kt). Raised with it at each rebase.
+MIN_TIME = 1_792_500_000
 CATALOG = "apps/metadata.1.0.sjson"
 # The packages the App Store takes from our catalog.
 OURS = {"app.grapheneos.apps", "app.grapheneos.camera", "de.diamaneos.auditor"}
@@ -85,8 +88,12 @@ def signed_catalog(work, key):
 
 def check(work, key):
     inventory = load_inventory()
-    packages = signed_catalog(work, key)["packages"]
+    catalog = signed_catalog(work, key)
+    packages = catalog["packages"]
     problems = []
+    # Catches a signing machine with a wrong clock.
+    if not isinstance(catalog.get("time"), int) or catalog["time"] < MIN_TIME:
+        problems.append("the catalog's time is before the App Store's floor " + str(MIN_TIME))
     for name, package in sorted(packages.items()):
         listed = inventory.get(name)
         if listed is None:
