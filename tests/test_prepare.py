@@ -50,9 +50,9 @@ class PrepareTests(unittest.TestCase):
         self.assertTrue((self.work / 'apps/packages/app.grapheneos.camera/9304').is_dir())
         self.assertTrue((self.work / 'generate.py').is_file())
 
-    def write(self, packages, secret=t.SECRET):
+    def write(self, packages, secret=t.SECRET, time=1_792_600_000):
         (self.work / 'apps').mkdir(exist_ok=True)
-        body = json.dumps({'time': 1, 'packages': packages}).encode()
+        body = json.dumps({'time': time, 'packages': packages}).encode()
         signature = base64.b64encode(b'Ed' + t.KEYNUM + t.ed25519.sign(secret, body))
         (self.work / 'apps/metadata.1.0.sjson').write_bytes(body + b'\n' + signature + b'\n')
         # The unsigned copy is not what phones read.
@@ -65,6 +65,16 @@ class PrepareTests(unittest.TestCase):
     def test_check_accepts_our_catalog(self):
         self.write(self.ours())
         self.prepare.check(str(self.work), str(self.key))
+
+    def test_check_refuses_a_catalog_older_than_the_app_stores_floor(self):
+        self.write(self.ours(), time=self.prepare.MIN_TIME - 1)
+        with self.assertRaises(SystemExit):
+            self.prepare.check(str(self.work), str(self.key))
+        self.write(self.ours(), time=self.prepare.MIN_TIME)
+        self.prepare.check(str(self.work), str(self.key))
+
+    def test_check_uses_only_signify_openbsd(self):
+        self.assertEqual(load().SIGNIFY, '/usr/bin/signify-openbsd')
 
     def test_check_refuses_a_catalog_signed_by_another_key(self):
         self.write(self.ours(), secret=b'\x01' * 32)
