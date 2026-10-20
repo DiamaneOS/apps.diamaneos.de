@@ -12,6 +12,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import struct
@@ -90,17 +91,15 @@ class MirrorTests(unittest.TestCase):
         fake = bin_dir / 'signify-openbsd'
         fake.write_text(SIGNIFY.format(python=sys.executable, tests=str(HERE)))
         fake.chmod(0o755)
-        path = os.environ['PATH']
-        os.environ['PATH'] = f'{bin_dir}{os.pathsep}{path}'
-        self.addCleanup(os.environ.__setitem__, 'PATH', path)
         key = self.tmp / 'test.pub'
         key.write_text('untrusted comment: test key\n'
                        + base64.b64encode(b'Ed' + KEYNUM + ed25519.public_key(SECRET)).decode() + '\n')
         spec = importlib.util.spec_from_file_location('grapheneos_mirror', REPO / 'grapheneos-mirror.py')
         self.mirror = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.mirror)
+        self.assertEqual(self.mirror.SIGNIFY, '/usr/bin/signify-openbsd')
+        self.mirror.SIGNIFY = str(fake)
         self.mirror.KEY = str(key)
-        self.mirror.REVIEWED = str(self.tmp / 'reviewed.json')
         self.upstream = Upstream()
         upstream = self.upstream
 
@@ -147,11 +146,6 @@ class MirrorTests(unittest.TestCase):
         u.packages['app.example.label']['source'] = 'DiamaneOS'
         u.apk('de.diamaneos.future', 1, b'ours later')
 
-    def review_current(self):
-        reviewed = {n: {k: v for k, v in p.items() if k not in self.mirror.UNREVIEWED}
-                    for n, p in self.upstream.packages.items() if self.mirror.listed(n, p)}
-        (self.tmp / 'reviewed.json').write_text(json.dumps(reviewed))
-
     def run_mirror(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -164,7 +158,6 @@ class MirrorTests(unittest.TestCase):
     def test_publishes_catalog_unchanged_with_only_the_app_stores_files(self):
         self.standard()
         catalog = self.upstream.catalog()
-        self.review_current()
         output = self.run_mirror()
         self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), catalog)
         self.assertEqual(self.files(), ['metadata.1.0.sjson',
@@ -174,15 +167,13 @@ class MirrorTests(unittest.TestCase):
                                         'packages/com.google.android.gms/5/base.apk.gz'])
         self.assertEqual(self.upstream.files['packages/app.vanadium.browser/1/base.apk.gz'],
                          (self.root / 'packages/app.vanadium.browser/1/base.apk.gz').read_bytes())
-        self.assertEqual(json.loads((self.state / 'review.json').read_text()), [])
-        self.assertNotIn('for review', output)
+        self.assertNotIn("GrapheneOS's catalog:", output)
         # Nothing new: no APK is fetched again.
         self.assertIn(' 0 MB fetched, 0 removed', self.run_mirror())
 
     def test_wrong_signature_publishes_nothing(self):
         self.standard()
         self.upstream.catalog(secret=hashlib.sha256(b'another key').digest())
-        self.review_current()
         with self.assertRaisesRegex(self.mirror.Refused, 'signature'):
             self.run_mirror()
         self.assertEqual(self.files(), [])
@@ -198,7 +189,6 @@ class MirrorTests(unittest.TestCase):
     def test_apk_not_matching_the_catalog_keeps_the_published_catalog(self):
         self.standard()
         first = self.upstream.catalog()
-        self.review_current()
         self.run_mirror()
         self.upstream.time += 10
         self.upstream.apk('app.vanadium.browser', 3, b'browser new', abis=['arm64-v8a'])
@@ -213,7 +203,6 @@ class MirrorTests(unittest.TestCase):
         self.upstream.apk('app.vanadium.config', 1, b'config A', v4=False)
         self.upstream.catalog()
         self.upstream.files['packages/app.vanadium.config/1/base.apk.gz'] = gzip.compress(b'config B', mtime=0)
-        self.review_current()
         with self.assertRaisesRegex(self.mirror.Refused, 'does not match'):
             self.run_mirror()
         self.assertEqual(self.files(), [])
@@ -229,7 +218,6 @@ class MirrorTests(unittest.TestCase):
     def test_older_catalog_refused(self):
         self.standard()
         self.upstream.catalog()
-        self.review_current()
         self.run_mirror()
         published = (self.root / 'metadata.1.0.sjson').read_bytes()
         self.upstream.time -= 1
@@ -242,7 +230,6 @@ class MirrorTests(unittest.TestCase):
         u = self.upstream
         u.apk('app.vanadium.config', 1, b'one', v4=False)
         u.catalog()
-        self.review_current()
         self.run_mirror()
         del u.packages['app.vanadium.config']['variants']['1']
         u.apk('app.vanadium.config', 2, b'two', v4=False)
@@ -261,27 +248,70 @@ class MirrorTests(unittest.TestCase):
     def test_published_file_changed_under_the_same_name_refused(self):
         self.upstream.apk('app.vanadium.config', 1, b'one', v4=False)
         self.upstream.catalog()
-        self.review_current()
         self.run_mirror()
         (self.state / 'verified.json').unlink()
         (self.root / 'packages/app.vanadium.config/1/base.apk.gz').write_bytes(gzip.compress(b'two', mtime=0))
         with self.assertRaisesRegex(self.mirror.Refused, 'size|does not match'):
             self.run_mirror()
 
-    def test_differences_from_the_review_are_listed_and_still_published(self):
+    def test_package_changes_are_logged_and_still_published(self):
         self.standard()
-        self.review_current()
+        self.upstream.catalog()
+        self.run_mirror()
         self.upstream.packages['app.vanadium.browser']['signatures'] = ['bb' * 32]
-        self.upstream.packages['com.google.android.gms']['deps2'] = ['app.example.new']
+        del self.upstream.packages['com.google.android.gms']
         self.upstream.apk('app.example.new', 1, b'new', v4=False)
+        self.upstream.time += 1
         catalog = self.upstream.catalog()
         output = self.run_mirror()
-        notes = {n['package']: n['reason'] for n in json.loads((self.state / 'review.json').read_text())}
-        self.assertEqual(notes, {'app.vanadium.browser': 'signers differ: ' + 'bb' * 32,
-                                 'com.google.android.gms': 'properties differ: deps2',
-                                 'app.example.new': 'new package'})
-        self.assertIn('for review: app.example.new (new package)', output)
+        self.assertIn("GrapheneOS's catalog: added app.example.new", output)
+        self.assertIn("GrapheneOS's catalog: dropped com.google.android.gms", output)
+        self.assertIn("GrapheneOS's catalog: other signers for app.vanadium.browser: " + 'bb' * 32, output)
         self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), catalog)
+
+    def test_icons_are_not_fatal_and_fetched_only_with_a_new_catalog(self):
+        self.standard()
+        self.upstream.catalog()
+        self.run_mirror()
+        icon = self.root / 'packages/app.vanadium.browser/icon.webp'
+        self.assertEqual(icon.read_bytes(), webp())
+        self.upstream.files['packages/app.vanadium.browser/icon.webp'] = b'not an image at all'
+        self.run_mirror()
+        self.assertEqual(icon.read_bytes(), webp())
+        self.upstream.time += 1
+        catalog = self.upstream.catalog()
+        output = self.run_mirror()
+        self.assertIn('icon kept as it was: packages/app.vanadium.browser/icon.webp', output)
+        self.assertEqual(icon.read_bytes(), webp())
+        self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), catalog)
+        # A missing icon or an unknown icon type only leaves the package without one.
+        del self.upstream.files['packages/app.vanadium.browser/icon.webp']
+        self.upstream.packages['com.google.android.gms']['iconType'] = 'svg'
+        self.upstream.time += 1
+        catalog = self.upstream.catalog()
+        self.run_mirror()
+        self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), catalog)
+
+    def test_unsafe_versions_refused(self):
+        for code in ('01', '\u0661', '1/../2', '-1'):
+            with self.subTest(code=code):
+                self.upstream.packages.clear()
+                self.upstream.apk('app.vanadium.config', 1, b'one', v4=False)
+                variants = self.upstream.packages['app.vanadium.config']['variants']
+                variants[code] = variants.pop('1')
+                self.upstream.catalog()
+                with self.assertRaisesRegex(self.mirror.Refused, 'unexpected version'):
+                    self.run_mirror()
+
+    def test_unsafe_package_names_refused(self):
+        for name in ('app.example/../../etc', '../app.example', 'app.example\n', 'app'):
+            with self.subTest(name=name):
+                self.upstream.packages.clear()
+                self.upstream.packages[name] = {'signatures': ['aa' * 32], 'source': 'GrapheneOS', 'variants': {}}
+                self.upstream.catalog()
+                with self.assertRaisesRegex(self.mirror.Refused, 'unexpected package name'):
+                    self.run_mirror()
+        self.assertFalse(any(self.tmp.rglob('etc')))
 
     def test_redirect_refused(self):
         self.upstream.catalog()
@@ -309,16 +339,27 @@ class MirrorTests(unittest.TestCase):
             self.assertFalse(listed(name, {'source': 'GrapheneOS'}), name)
         self.assertFalse(listed('app.example', {'originalPackage': 'app.grapheneos.camera'}))
         self.assertFalse(listed('app.example', {'source': 'DiamaneOS'}))
+        for name in ('De.Diamaneos.x', 'de.diamaneos', 'App.GrapheneOS.Apps', 'APP.ATTESTATION.AUDITOR'):
+            self.assertFalse(listed(name, {}), name)
+        self.assertTrue(listed('de.diamaneosx.other', {}))
         self.assertTrue(listed('app.vanadium.browser', {'originalPackage': 'org.chromium.chrome'}))
 
-    def test_reviewed_list_is_in_scope(self):
-        reviewed = json.loads((REPO / 'grapheneos/reviewed.json').read_text())
-        for name, props in reviewed.items():
-            self.assertTrue(self.mirror.listed(name, props), name)
-            self.assertFalse(set(props) & self.mirror.UNREVIEWED, name)
-        self.assertNotIn('app.vanadium.trichromelibrary', reviewed)
-        self.assertEqual(reviewed['app.vanadium.browser']['deps2'], ['app.vanadium.config 0 SkipIfMissing'])
-
+    def test_scope_sets_match_the_app_store(self):
+        """OURS and EXCLUDED equal Catalogs.kt in an AppStore checkout next to this one (or APPSTORE_SOURCE)."""
+        source = Path(os.environ.get('APPSTORE_SOURCE', REPO.parent / 'AppStore'))
+        catalogs = source / 'app/src/main/java/app/grapheneos/apps/core/Catalogs.kt'
+        if not catalogs.is_file():
+            self.skipTest('no AppStore checkout at ' + str(source))
+        text = catalogs.read_text()
+        def kotlin_set(name):
+            found = re.search(r'val ' + name + r' = setOf\(([^)]*)\)', text)
+            return set(re.findall(r'"([^"]+)"', found[1]))
+        self.assertEqual(kotlin_set('DIAMANEOS_PACKAGES'), self.mirror.OURS)
+        self.assertEqual(kotlin_set('EXCLUDED_PACKAGES'), self.mirror.EXCLUDED)
+        prepare = importlib.util.spec_from_file_location('prepare', REPO / 'prepare.py')
+        module = importlib.util.module_from_spec(prepare)
+        prepare.loader.exec_module(module)
+        self.assertEqual(module.OURS, self.mirror.OURS)
 
 if __name__ == '__main__':
     unittest.main()

@@ -10,11 +10,10 @@ ROOT is the served grapheneos/ directory and STATE the job's own state. It needs
 2. Fetches every APK the App Store may take from it for arm64-v8a: GrapheneOS's packages without ours
    and without the excluded ones, as in the App Store's Catalogs.kt. Each .gz must have the catalog's
    size and unpack to the catalog's size and SHA-256. v4 signatures and icons are not in the catalog:
-   their size and format are checked, and Android checks the v4 signature against the APK.
+   their size and format are checked, and Android checks the v4 signature against the APK. Icons are
+   fetched again only with a new catalog, and a failed icon keeps the previous one.
 3. Only then publishes the catalog bytes unchanged. Files neither this nor the previous catalog lists
-   are removed.
-4. Packages that differ from grapheneos/reviewed.json are listed in STATE/review.json for review. They
-   are still published: GrapheneOS's key is trusted for them.
+   are removed. Packages added, dropped or with other signers than in the previous catalog are logged.
 """
 
 import fcntl
@@ -35,13 +34,12 @@ CATALOG = "metadata.1.0.sjson"
 ABI = "arm64-v8a"
 HERE = os.path.dirname(os.path.abspath(__file__))
 KEY = os.path.join(HERE, "grapheneos-apps.0.pub")
-REVIEWED = os.path.join(HERE, "grapheneos/reviewed.json")
+# Debian's OpenBSD signify. Debian's plain signify is an unrelated mail tool.
+SIGNIFY = "/usr/bin/signify-openbsd"
 # Our builds come from our own catalog. The App Store refuses them from GrapheneOS's.
 OURS = {"app.grapheneos.apps", "app.grapheneos.camera", "de.diamaneos.auditor"}
 # Info shows GrapheneOS's release news, and our Auditor replaces GrapheneOS's Auditor.
 EXCLUDED = {"app.grapheneos.info", "app.attestation.auditor"}
-# Properties left out of the review: versions come and go, descriptions are text.
-UNREVIEWED = {"variants", "description"}
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+")
 APK = re.compile(r"[A-Za-z0-9_.-]+\.apk")
 ICONS = {"webp": (b"RIFF", 8, b"WEBP"), "png": (b"\x89PNG\r\n\x1a\n", 0, b"")}
@@ -69,6 +67,7 @@ def fetch(path, limit, out=None):
     try:
         response = OPENER.open(urllib.request.Request(url, headers={"Accept-Encoding": "identity"}), timeout=60)
     except urllib.error.HTTPError as e:
+        e.close()
         raise Refused(path + ": HTTP " + str(e.code))
     with response:
         if response.status != 200 or response.geturl() != url:
@@ -90,8 +89,10 @@ def fetch(path, limit, out=None):
 def listed(name, package):
     """The App Store takes this package from GrapheneOS's catalog (Catalogs.kt, Catalog.GrapheneOS)."""
     names = [name] + ([package["originalPackage"]] if "originalPackage" in package else [])
+    # In lower case, as Catalogs.kt compares them.
     return package.get("source") != "DiamaneOS" and not any(
-        n in OURS or n in EXCLUDED or n.startswith("de.diamaneos.") for n in names)
+        n in OURS or n in EXCLUDED or n == "de.diamaneos" or n.startswith("de.diamaneos.")
+        for n in (n.lower() for n in names))
 
 
 def verify_catalog(data, published):
@@ -105,11 +106,9 @@ def verify_catalog(data, published):
         f.write(data[:-102])
     with open(signature, "wb") as f:
         f.write(b"untrusted comment: signature from GrapheneOS app repository key 0\n" + data[-101:])
-    # Debian names OpenBSD's signify signify-openbsd.
-    signify = shutil.which("signify-openbsd") or shutil.which("signify")
-    if signify is None:
-        raise Refused("signify is not installed")
-    result = subprocess.run([signify, "-V", "-q", "-p", KEY, "-m", message, "-x", signature], capture_output=True)
+    if not os.path.isfile(SIGNIFY):
+        raise Refused(SIGNIFY + " is not installed")
+    result = subprocess.run([SIGNIFY, "-V", "-q", "-p", KEY, "-m", message, "-x", signature], capture_output=True)
     shutil.rmtree(work)
     if result.returncode != 0:
         raise Refused("catalog signature refused")
@@ -128,12 +127,11 @@ def needed_files(catalog):
         if not NAME.fullmatch(name):
             raise Refused("unexpected package name " + repr(name))
         icon = package.get("iconType")
-        if icon is not None:
-            if icon not in ICONS:
-                raise Refused(name + ": unexpected icon type")
+        # An unknown icon type only leaves the package without an icon.
+        if icon in ICONS:
             files.append(("packages/" + name + "/icon." + icon, "icon", icon))
         for code, variant in sorted(package["variants"].items()):
-            if not code.isdigit():
+            if not re.fullmatch(r"[1-9][0-9]{0,18}", code):
                 raise Refused(name + ": unexpected version " + repr(code))
             if "abis" in variant and ABI not in variant["abis"]:
                 continue
@@ -197,17 +195,29 @@ def check(path, kind, expected):
      "icon": lambda: check_icon(path, expected)}[kind]()
 
 
-def mirror_file(root, path, kind, expected, verified):
+def mirror_file(root, path, kind, expected, verified, new_catalog):
     """Fetches and checks one file unless it is already in place. Returns the bytes fetched."""
     target = os.path.join(root, path)
     key = [kind, list(expected)] if kind == "apk" else [kind]
-    if kind != "icon" and os.path.isfile(target):
+    if kind == "icon":
+        if os.path.isfile(target) and not new_catalog:
+            return 0
+        try:
+            return fetch_file(target, path, kind, expected, verified, key)
+        except (Refused, OSError) as e:
+            print("icon kept as it was: " + path + " (" + str(e) + ")")
+            return 0
+    if os.path.isfile(target):
         # Versions are immutable: a published file is kept, and it must still match the catalog.
         stat = os.stat(target)
         if verified.get(path) != key + [stat.st_size, stat.st_mtime_ns]:
             check(target, kind, expected)
             verified[path] = key + [stat.st_size, stat.st_mtime_ns]
         return 0
+    return fetch_file(target, path, kind, expected, verified, key)
+
+
+def fetch_file(target, path, kind, expected, verified, key):
     os.makedirs(os.path.dirname(target), exist_ok=True)
     tmp = target + ".tmp"
     limit = {"apk": expected[2] if kind == "apk" else 0, "idsig": MAX_IDSIG, "icon": MAX_ICON}[kind]
@@ -226,24 +236,17 @@ def mirror_file(root, path, kind, expected, verified):
     return loaded
 
 
-def review(catalog):
-    with open(REVIEWED) as f:
-        reviewed = json.load(f)
-    notes = []
-    current = {name: p for name, p in catalog["packages"].items() if listed(name, p)}
-    for name, package in sorted(current.items()):
-        expected = reviewed.get(name)
-        if expected is None:
-            notes.append({"package": name, "reason": "new package"})
-        elif sorted(package.get("signatures", [])) != sorted(expected.get("signatures", [])):
-            notes.append({"package": name, "reason": "signers differ: " + ", ".join(package.get("signatures", []))})
-        else:
-            theirs = {k: v for k, v in package.items() if k not in UNREVIEWED}
-            differ = sorted(k for k in set(theirs) | set(expected) if theirs.get(k) != expected.get(k))
-            if differ:
-                notes.append({"package": name, "reason": "properties differ: " + ", ".join(differ)})
-    for name in sorted(set(reviewed) - set(current)):
-        notes.append({"package": name, "reason": "no longer listed"})
+def changes(previous, catalog):
+    """Packages added, dropped or signed by others since the previous catalog, for the log."""
+    old = {n: p for n, p in previous["packages"].items() if listed(n, p)} if previous else {}
+    new = {n: p for n, p in catalog["packages"].items() if listed(n, p)}
+    if not old:
+        return []
+    notes = ["added " + n for n in sorted(set(new) - set(old))]
+    notes += ["dropped " + n for n in sorted(set(old) - set(new))]
+    notes += ["other signers for " + n + ": " + ", ".join(new[n].get("signatures", []))
+              for n in sorted(set(new) & set(old))
+              if sorted(new[n].get("signatures", [])) != sorted(old[n].get("signatures", []))]
     return notes
 
 
@@ -296,14 +299,13 @@ def locked_mirror(root, state):
         with open(verified_path) as f:
             verified = json.load(f)
     loaded = 0
+    new_catalog = previous is None or data != old
     try:
         for path, kind, expected in files:
-            loaded += mirror_file(root, path, kind, expected, verified)
+            loaded += mirror_file(root, path, kind, expected, verified, new_catalog)
     finally:
         write_json(verified_path, verified)
-    notes = review(catalog)
-    write_json(os.path.join(state, "review.json"), notes)
-    if previous is None or data != old:
+    if new_catalog:
         with open(published + ".tmp", "wb") as f:
             f.write(data)
             f.flush()
@@ -319,8 +321,8 @@ def locked_mirror(root, state):
     write_json(verified_path, verified)
     print("published GrapheneOS catalog " + str(catalog["time"]) + ": " + str(len(files)) + " files, "
           + str(loaded // 1000000) + " MB fetched, " + str(removed) + " removed")
-    for note in notes:
-        print("for review: " + note["package"] + " (" + note["reason"] + ")")
+    for note in changes(previous, catalog):
+        print("GrapheneOS's catalog: " + note)
 
 
 if __name__ == "__main__":
