@@ -1,7 +1,7 @@
 # Application repository boundaries
 
 - Upstream provenance is in [UPSTREAM.json](UPSTREAM.json). The upstream MIT license is kept in [LICENSE](LICENSE).
-- `prepare.py`, `grapheneos-mirror.py`, `grapheneos/reviewed.json`, `systemd/` and `grapheneos-apps.0.pub` are DiamaneOS additions. The key is GrapheneOS's catalog key, taken from its App Store source.
+- `prepare.py`, `grapheneos-mirror.py`, `systemd/` and `grapheneos-apps.0.pub` are DiamaneOS additions. The key is GrapheneOS's catalog key, taken from its App Store source.
 - `apps/packages` holds only our own packages. GrapheneOS's packages and their inherited version files were removed: they come from GrapheneOS's catalog.
 - Packages keep their own signing identities. Catalog authentication does not replace APK signature checks.
 - Our inventory turns off legacy fs-verity sidecars. Android 17 uses APK Signature Scheme v4 sidecars when supplied, alongside the APK's own signature and the catalog's hashes.

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Prepare and check the work tree of our catalog. It lists only our own builds.
 
-./prepare.py WORK          copy the inventory, scripts and static files into WORK
-./prepare.py --check WORK  after generate.py: the catalog lists exactly our packages, with their signers
+./prepare.py WORK                  copy the inventory, scripts and static files into WORK
+./prepare.py --check WORK KEY.pub  after generate.py: the signed catalog verifies with apps.0's public
+                                   key and lists exactly our packages, with their signers
 
 The inventory is apps/packages/*/common-props.toml. GrapheneOS's apps are not in our catalog: the App
 Store reads GrapheneOS's own catalog for them, mirrored by grapheneos-mirror.py, and refuses our
@@ -12,11 +13,16 @@ packages from it. The App Store also refuses any other package from our catalog 
 import json
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
 import tomllib
 
 REPO = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = ["generate.py", "compress-apks", "process-static", "import-apks.py"]
+# OpenBSD's signify, as generate.py uses it. Debian names it signify-openbsd.
+SIGNIFY = shutil.which("signify-openbsd") or "signify"
+CATALOG = "apps/metadata.1.0.sjson"
 # The packages the App Store takes from our catalog.
 OURS = {"app.grapheneos.apps", "app.grapheneos.camera", "de.diamaneos.auditor"}
 
@@ -60,10 +66,26 @@ def prepare(work):
     print("prepared " + str(len(inventory)) + " packages: " + ", ".join(sorted(inventory)))
 
 
-def check(work):
+def signed_catalog(work, key):
+    """The JSON of the catalog the App Store reads, after its signature check with key."""
+    with open(os.path.join(work, CATALOG), "rb") as f:
+        data = f.read()
+    if len(data) < 103 or data[-102:-101] != b"\n" or data[-1:] != b"\n":
+        sys.exit("malformed signed catalog")
+    with tempfile.TemporaryDirectory() as tmp:
+        message, signature = os.path.join(tmp, "metadata.json"), os.path.join(tmp, "metadata.json.sig")
+        with open(message, "wb") as f:
+            f.write(data[:-102])
+        with open(signature, "wb") as f:
+            f.write(b"untrusted comment: signature from the DiamaneOS app catalog key\n" + data[-101:])
+        if subprocess.run([SIGNIFY, "-V", "-q", "-p", key, "-m", message, "-x", signature]).returncode != 0:
+            sys.exit("the signed catalog does not verify with " + key)
+    return json.loads(data[:-102])
+
+
+def check(work, key):
     inventory = load_inventory()
-    with open(os.path.join(work, "apps/metadata.1.json")) as f:
-        packages = json.load(f)["packages"]
+    packages = signed_catalog(work, key)["packages"]
     problems = []
     for name, package in sorted(packages.items()):
         listed = inventory.get(name)
@@ -81,8 +103,8 @@ def check(work):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--check":
-        check(os.path.abspath(sys.argv[2]))
+    if len(sys.argv) == 4 and sys.argv[1] == "--check":
+        check(os.path.abspath(sys.argv[2]), os.path.abspath(sys.argv[3]))
     elif len(sys.argv) == 2 and not sys.argv[1].startswith("-"):
         prepare(os.path.abspath(sys.argv[1]))
     else:
