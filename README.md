@@ -12,7 +12,7 @@ The scripts need signify, apksigner and aapt2 from build tools 37 (generate.py r
 1. `./prepare.py WORK` copies our inventory (`apps/packages`), the scripts and static files into a work tree.
 2. In WORK, `./import-apks.py` adds our signed builds. Set each version's channel in its `channel.toml`.
 3. In WORK, `./generate.py` writes the catalog and checks every APK's signer against the inventory. It signs with `apps.0.sec` when that key is in WORK.
-4. `./prepare.py --check WORK apps.0.pub` checks the signed catalog with our catalog key's public key and confirms that it lists only our packages with their signers, each as a single APK. It refuses a catalog whose time is before the App Store's floor for our catalog (`minTimestamp` in Catalogs.kt), as from a signing machine with a wrong clock.
+4. `./prepare.py --check WORK apps.0.pub` checks the signed catalog with our catalog key's public key and confirms that it lists only our packages with their signers, each as a single APK, and that each app on the main screen has a WebP icon of at most 1 MiB. It refuses a catalog whose time is before the App Store's floor for our catalog (`minTimestamp` in Catalogs.kt), as from a signing machine with a wrong clock.
 5. `deploy-static` in WORK publishes the tree.
 
 ## GrapheneOS's catalog
