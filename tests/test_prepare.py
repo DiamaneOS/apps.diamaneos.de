@@ -109,6 +109,21 @@ class PrepareTests(unittest.TestCase):
         self.write(self.ours())
         self.prepare.check(str(self.work), str(self.key))
 
+    def test_check_requires_a_label_in_each_version(self):
+        version = {'apks': ['base.apk'], 'label': 'Camera processing'}
+        for label in (None, '', ' ', 1):
+            packages = self.ours()
+            packages['app.grapheneos.apps']['variants'] = {'3605': dict(version, label='App Store')}
+            packages['de.diamaneos.camera.processor']['variants'] = {'1': dict(version, label=label)}
+            if label is None:
+                del packages['de.diamaneos.camera.processor']['variants']['1']['label']
+            self.write(packages)
+            with self.assertRaises(SystemExit, msg=repr(label)):
+                self.prepare.check(str(self.work), str(self.key))
+        packages['de.diamaneos.camera.processor']['variants'] = {'1': version}
+        self.write(packages)
+        self.prepare.check(str(self.work), str(self.key))
+
     def test_check_refuses_a_catalog_older_than_the_app_stores_floor(self):
         self.write(self.ours(), time=self.prepare.MIN_TIME - 1)
         with self.assertRaises(SystemExit):
