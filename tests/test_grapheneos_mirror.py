@@ -58,6 +58,8 @@ class Upstream:
     def __init__(self):
         self.files, self.packages, self.time = {}, {}, 1_780_000_000
         self.redirect = set()
+        # Paths whose connection drops before the whole file is sent.
+        self.truncated = set()
 
     def apk(self, name, code, content, abis=None, v4=True, apk='base.apk', **extra):
         gz = gzip.compress(content, mtime=0)
@@ -113,6 +115,9 @@ class MirrorTests(unittest.TestCase):
                     return
                 data = upstream.files.get(path)
                 self.send_response(200 if data is not None else 404)
+                # As GrapheneOS's server, each file with its length.
+                if data is not None:
+                    self.send_header('Content-Length', str(len(data) + (100 if path in upstream.truncated else 0)))
                 self.end_headers()
                 if data is not None:
                     self.wfile.write(data)
@@ -278,6 +283,15 @@ class MirrorTests(unittest.TestCase):
         self.upstream.files['packages/app.vanadium.browser/icon.webp'] = b'not an image at all'
         self.run_mirror()
         self.assertEqual(icon.read_bytes(), webp())
+        self.upstream.time += 1
+        catalog = self.upstream.catalog()
+        output = self.run_mirror()
+        self.assertIn('icon kept as it was: packages/app.vanadium.browser/icon.webp', output)
+        self.assertEqual(icon.read_bytes(), webp())
+        self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), catalog)
+        # So does a dropped connection.
+        self.upstream.files['packages/app.vanadium.browser/icon.webp'] = webp() + b'more'
+        self.upstream.truncated.add('packages/app.vanadium.browser/icon.webp')
         self.upstream.time += 1
         catalog = self.upstream.catalog()
         output = self.run_mirror()
