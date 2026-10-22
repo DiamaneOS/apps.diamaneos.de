@@ -3,7 +3,8 @@
 
 ./prepare.py WORK                  copy the inventory, scripts and static files into WORK
 ./prepare.py --check WORK KEY.pub  after generate.py: the signed catalog verifies with apps.0's public
-                                   key and lists only the inventory, with its signers and single APKs
+                                   key and lists only the inventory, with its signers, single APKs and
+                                   an icon for each app on the main screen
 
 The inventory is apps/packages/*/common-props.toml. GrapheneOS's apps are not in our catalog: the App
 Store reads GrapheneOS's own catalog for them, mirrored by grapheneos-mirror.py, and refuses our
@@ -35,6 +36,8 @@ SIGNERS = {
 }
 # GrapheneOS's apps the App Store never lists (EXCLUDED_PACKAGES in Catalogs.kt).
 EXCLUDED = {"app.grapheneos.info", "app.attestation.auditor"}
+# The App Store reads at most 1 MiB of an icon (DownloadIconLoader.kt).
+MAX_ICON = 1024 * 1024
 
 
 def load_inventory():
@@ -94,6 +97,21 @@ def signed_catalog(work, key):
     return json.loads(data[:-102])
 
 
+def icon_problem(work, name, package):
+    """Each app on the App Store's main screen needs its WebP icon in the tree that is published."""
+    icon = package.get("iconType")
+    if icon is None:
+        return name + ": no icon" if package.get("isTopLevel", True) is not False else None
+    path = os.path.join(work, "apps/packages", name, "icon." + str(icon))
+    if icon != "webp" or not os.path.isfile(path):
+        return name + ": icon missing"
+    with open(path, "rb") as f:
+        data = f.read(MAX_ICON + 1)
+    if len(data) > MAX_ICON or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        return name + ": icon is not a WebP image of at most 1 MiB"
+    return None
+
+
 def check(work, key):
     inventory = load_inventory()
     catalog = signed_catalog(work, key)
@@ -113,6 +131,8 @@ def check(work, key):
         # The App Store parses each APK from our catalog for its signer, and a split does not parse.
         elif any(v.get("apks") != ["base.apk"] for v in package.get("variants", {}).values()):
             problems.append(name + ": not a single APK")
+        if listed is not None and (problem := icon_problem(work, name, package)):
+            problems.append(problem)
     for problem in problems:
         print(problem)
     if problems:

@@ -30,6 +30,7 @@ class PrepareTests(unittest.TestCase):
         fake.write_text(t.SIGNIFY.format(python=sys.executable, tests=str(REPO / 'tests')))
         fake.chmod(0o755)
         self.prepare.SIGNIFY = str(fake)
+        self.copy_icons()
         self.key = self.work / 'apps.0.pub'
         self.key.write_text('untrusted comment: test key\n'
                             + base64.b64encode(b'Ed' + t.KEYNUM + t.ed25519.public_key(t.SECRET)).decode() + '\n')
@@ -59,8 +60,50 @@ class PrepareTests(unittest.TestCase):
         (self.work / 'apps/metadata.1.json').write_text(json.dumps({'time': 1, 'packages': self.ours()}))
 
     def ours(self):
-        return {n: {'source': 'DiamaneOS', 'signatures': p['signatures'], 'variants': {}}
-                for n, p in self.prepare.load_inventory().items()}
+        """Our catalog as generate.py writes it. The icons are those prepare() copies."""
+        packages = {}
+        for n, p in self.prepare.load_inventory().items():
+            packages[n] = {'source': 'DiamaneOS', 'signatures': p['signatures'], 'variants': {}}
+            if 'isTopLevel' in p:
+                packages[n]['isTopLevel'] = p['isTopLevel']
+            if (REPO / 'apps/packages' / n / 'icon.webp').is_file():
+                packages[n]['iconType'] = 'webp'
+        return packages
+
+    def copy_icons(self):
+        for icon in (REPO / 'apps/packages').glob('*/icon.webp'):
+            target = self.work / icon.relative_to(REPO)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(icon, target)
+
+    def test_every_app_on_the_main_screen_has_an_icon(self):
+        self.assertEqual(sorted(n for n, p in self.ours().items() if 'iconType' in p),
+                         ['app.grapheneos.apps', 'app.grapheneos.camera', 'de.diamaneos.auditor'])
+
+    def test_check_refuses_missing_or_unusable_icons(self):
+        icon = self.work / 'apps/packages/de.diamaneos.auditor/icon.webp'
+        for change in ('no icon', 'missing', 'png', 'not webp', 'too large'):
+            self.copy_icons()
+            packages = self.ours()
+            if change == 'no icon':
+                del packages['de.diamaneos.auditor']['iconType']
+            elif change == 'missing':
+                icon.unlink()
+            elif change == 'png':
+                packages['de.diamaneos.auditor']['iconType'] = 'png'
+            elif change == 'not webp':
+                icon.write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(32))
+            else:
+                icon.write_bytes(icon.read_bytes()[:12] + bytes(1024 * 1024))
+            self.write(packages)
+            with self.assertRaises(SystemExit, msg=change):
+                self.prepare.check(str(self.work), str(self.key))
+        # An app not on the main screen needs none.
+        self.copy_icons()
+        packages = self.ours()
+        self.assertNotIn('iconType', packages['de.diamaneos.camera.processor'])
+        self.write(packages)
+        self.prepare.check(str(self.work), str(self.key))
 
     def test_check_accepts_our_catalog(self):
         self.write(self.ours())
