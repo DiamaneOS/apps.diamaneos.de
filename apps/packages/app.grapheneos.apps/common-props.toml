@@ -1,7 +1,8 @@
-signatures = ["3384c31fce4a7c008a8f7b2652bc48cc4321f1d2c877b18e30a4ed619af12f6b"]
-source = "GrapheneOS"
+# The release certificate of our build.
+signatures = ["559ffb104edd9386a39d512063cb7458c5ec0e29c9b52a91068ce950dd768a47"]
+source = "DiamaneOS"
 hasFsVeritySignatures = false
 
 description = """
-App Store is the client for the GrapheneOS app repository. It's included in GrapheneOS but can also be used on other Android 12+ operating systems.
+App Store is the client for the DiamaneOS app repository and is included in DiamaneOS.
 """

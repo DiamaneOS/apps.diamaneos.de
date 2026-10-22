@@ -1,0 +1,9 @@
+# The release certificate of our build, the Camera's.
+signatures = ["285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61"]
+source = "DiamaneOS"
+hasFsVeritySignatures = false
+isTopLevel = false
+
+description = """
+Camera processing runs the Camera's portrait preview in its own app. Camera needs it.
+"""

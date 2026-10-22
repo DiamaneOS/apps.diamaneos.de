@@ -34,19 +34,19 @@ class PrepareTests(unittest.TestCase):
         self.key.write_text('untrusted comment: test key\n'
                             + base64.b64encode(b'Ed' + t.KEYNUM + t.ed25519.public_key(t.SECRET)).decode() + '\n')
 
-    def test_inventory_is_our_three_apps_with_their_release_signers(self):
+    def test_inventory_is_our_apps_with_their_release_signers(self):
         inventory = self.prepare.load_inventory()
-        self.assertEqual(set(inventory), self.prepare.OURS)
         self.assertEqual({n: p['signatures'] for n, p in inventory.items()}, {
             'app.grapheneos.apps': ['559ffb104edd9386a39d512063cb7458c5ec0e29c9b52a91068ce950dd768a47'],
             'app.grapheneos.camera': ['285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61'],
+            'app.grapheneos.camera.processor': ['285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61'],
             'de.diamaneos.auditor': ['427bfd360586b829475f37abffd2548d93db3618e45c994de416469ef04bc2ec']})
 
     def test_prepare_drops_other_packages_and_keeps_versions(self):
         (self.work / 'apps/packages/app.vanadium.browser/1').mkdir(parents=True)
         (self.work / 'apps/packages/app.grapheneos.camera/9304').mkdir(parents=True)
         self.prepare.prepare(str(self.work))
-        self.assertEqual(sorted(os.listdir(self.work / 'apps/packages')), sorted(self.prepare.OURS))
+        self.assertEqual(sorted(os.listdir(self.work / 'apps/packages')), sorted(self.prepare.load_inventory()))
         self.assertTrue((self.work / 'apps/packages/app.grapheneos.camera/9304').is_dir())
         self.assertTrue((self.work / 'generate.py').is_file())
 
@@ -81,8 +81,25 @@ class PrepareTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.prepare.check(str(self.work), str(self.key))
 
+    def test_inventory_refuses_other_signers_and_grapheneos_apps(self):
+        self.prepare.REPO = str(self.work / 'repo')
+        shutil.copytree(REPO / 'apps/packages', self.work / 'repo/apps/packages')
+        props = self.work / 'repo/apps/packages/app.grapheneos.camera.processor/common-props.toml'
+        original = props.read_text()
+        for text in (original.replace('285a091a', 'aaaaaaaa'), original.replace('"285a', '"' + 'bb' * 32 + '", "285a'),
+                     original.replace('"285a', '"559ffb104edd9386a39d512063cb7458c5ec0e29c9b52a91068ce950dd768a47", "285a'),
+                     original.replace('signatures = [', 'signatures = [] #')):
+            props.write_text(text)
+            with self.assertRaises(Exception, msg=text):
+                self.prepare.load_inventory()
+        props.write_text(original)
+        self.prepare.load_inventory()
+        props.parent.rename(props.parent.with_name('App.Attestation.Auditor'))
+        with self.assertRaises(Exception):
+            self.prepare.load_inventory()
+
     def test_check_refuses_other_packages_and_signers(self):
-        for change in ('other', 'signer', 'source', 'renamed'):
+        for change in ('other', 'signer', 'source', 'renamed', 'split'):
             packages = self.ours()
             if change == 'other':
                 packages['app.vanadium.browser'] = {'source': 'GrapheneOS', 'signatures': ['aa' * 32]}
@@ -90,6 +107,8 @@ class PrepareTests(unittest.TestCase):
                 packages['app.grapheneos.camera']['signatures'] = ['bb' * 32]
             elif change == 'source':
                 packages['de.diamaneos.auditor']['source'] = 'GrapheneOS'
+            elif change == 'split':
+                packages['app.grapheneos.camera.processor']['variants'] = {'2': {'apks': ['base.apk', 'split_x.apk']}}
             else:
                 packages['app.grapheneos.apps']['originalPackage'] = 'org.example'
             self.write(packages)

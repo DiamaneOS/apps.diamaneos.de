@@ -359,7 +359,8 @@ class MirrorTests(unittest.TestCase):
         prepare = importlib.util.spec_from_file_location('prepare', REPO / 'prepare.py')
         module = importlib.util.module_from_spec(prepare)
         prepare.loader.exec_module(module)
-        self.assertEqual(module.OURS, self.mirror.OURS)
+        self.assertEqual(kotlin_set('DIAMANEOS_SIGNERS'), module.SIGNERS)
+        self.assertEqual(module.EXCLUDED, self.mirror.EXCLUDED)
         floor = re.search(r'DiamaneOS\(BuildConfig\.REPO_PUBLIC_KEY, [^)]*, ([0-9_]+)L\)', text)
         self.assertEqual(int(floor[1].replace('_', '')), module.MIN_TIME)
 
