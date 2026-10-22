@@ -19,6 +19,7 @@ ROOT is the served grapheneos/ directory and STATE the job's own state. It needs
 import fcntl
 import gzip
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -72,10 +73,14 @@ def fetch(path, limit, out=None):
     with response:
         if response.status != 200 or response.geturl() != url:
             raise Refused("unexpected response for " + path)
+        # A dropped connection ends the body early without an error.
+        length = response.headers.get("Content-Length")
         if out is None:
             data = response.read(limit + 1)
             if len(data) > limit:
                 raise Refused(path + " exceeds " + str(limit) + " bytes")
+            if length is not None and str(len(data)) != length:
+                raise Refused(path + ": incomplete")
             return data
         total = 0
         while block := response.read(CHUNK):
@@ -83,6 +88,8 @@ def fetch(path, limit, out=None):
             if total > limit:
                 raise Refused(path + " exceeds " + str(limit) + " bytes")
             out.write(block)
+        if length is not None and str(total) != length:
+            raise Refused(path + ": incomplete")
         return total
 
 
@@ -204,7 +211,7 @@ def mirror_file(root, path, kind, expected, verified, new_catalog):
             return 0
         try:
             return fetch_file(target, path, kind, expected, verified, key)
-        except (Refused, OSError) as e:
+        except (Refused, OSError, http.client.HTTPException) as e:
             print("icon kept as it was: " + path + " (" + str(e) + ")")
             return 0
     if os.path.isfile(target):
