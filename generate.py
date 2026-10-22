@@ -291,6 +291,11 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
         kv = shlex.split(line)
         if kv[0].startswith("application-label:"):
             pkg_props["label"] = kv[0].split(":")[1]
+        elif kv[0] == "application:" and "label" not in pkg_props:
+            # DiamaneOS: a label written in the manifest, not a resource, has no application-label line.
+            for item in kv[1:]:
+                if item.startswith("label=") and item != "label=":
+                    pkg_props["label"] = item[len("label="):]
         elif kv[0].startswith("minSdkVersion"):
             pkg_props["minSdk"] = int(kv[0].split(":")[1])
         elif kv[0].startswith("native-code"):
