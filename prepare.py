@@ -3,8 +3,8 @@
 
 ./prepare.py WORK                  copy the inventory, scripts and static files into WORK
 ./prepare.py --check WORK KEY.pub  after generate.py: the signed catalog verifies with apps.0's public
-                                   key and lists only the inventory, with its signers, single APKs and
-                                   an icon for each app on the main screen
+                                   key and lists only the inventory, with its signers, single APKs, a
+                                   label in each version and an icon for each app on the main screen
 
 The inventory is apps/packages/*/common-props.toml. GrapheneOS's apps are not in our catalog: the App
 Store reads GrapheneOS's own catalog for them, mirrored by grapheneos-mirror.py, and refuses our
@@ -131,6 +131,10 @@ def check(work, key):
         # The App Store parses each APK from our catalog for its signer, and a split does not parse.
         elif any(v.get("apks") != ["base.apk"] for v in package.get("variants", {}).values()):
             problems.append(name + ": not a single APK")
+        # The App Store reads each version's label and refuses the whole catalog without one (RPackage in Repo.kt).
+        if any(not isinstance(v, dict) or not isinstance(v.get("label"), str) or not v["label"].strip()
+               for v in package.get("variants", {}).values()):
+            problems.append(name + ": a version without a label")
         if listed is not None and (problem := icon_problem(work, name, package)):
             problems.append(problem)
     for problem in problems:
