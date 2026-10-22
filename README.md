@@ -2,7 +2,7 @@
 
 apps.diamaneos.de serves two signed catalogs. The App Store checks each with its own key, and a package can come from only one of them.
 
-- Our catalog (`metadata.1.0.sjson`), made with GrapheneOS's generator and signed with our offline catalog key. It lists only our App Store, Camera and Auditor (source `DiamaneOS`), signed with our app keys.
+- Our catalog (`metadata.1.0.sjson`), made with GrapheneOS's generator and signed with our offline catalog key. It lists only packages signed with our App Store, Camera or Auditor key (source `DiamaneOS`): the App Store, Camera, CameraProcessor and Auditor.
 - GrapheneOS's catalog (`grapheneos/metadata.1.0.sjson`), served unchanged with its APKs. The App Store checks it with GrapheneOS's catalog key and takes only GrapheneOS's packages from it, without our packages, GrapheneOS's Info app (its release news) and GrapheneOS's Auditor.
 
 ## Building our catalog
@@ -12,7 +12,7 @@ The scripts need signify, apksigner and aapt2 from build tools 37 (generate.py r
 1. `./prepare.py WORK` copies our inventory (`apps/packages`), the scripts and static files into a work tree.
 2. In WORK, `./import-apks.py` adds our signed builds. Set each version's channel in its `channel.toml`.
 3. In WORK, `./generate.py` writes the catalog and checks every APK's signer against the inventory. It signs with `apps.0.sec` when that key is in WORK.
-4. `./prepare.py --check WORK apps.0.pub` checks the signed catalog with our catalog key's public key and confirms that it lists exactly our packages with their signers. It refuses a catalog whose time is before the App Store's floor for our catalog (`minTimestamp` in Catalogs.kt), as from a signing machine with a wrong clock.
+4. `./prepare.py --check WORK apps.0.pub` checks the signed catalog with our catalog key's public key and confirms that it lists only our packages with their signers, each as a single APK. It refuses a catalog whose time is before the App Store's floor for our catalog (`minTimestamp` in Catalogs.kt), as from a signing machine with a wrong clock.
 5. `deploy-static` in WORK publishes the tree.
 
 ## GrapheneOS's catalog

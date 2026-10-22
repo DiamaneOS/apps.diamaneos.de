@@ -1,5 +1,6 @@
-signatures = ["6436b155b917c2f9a9ed1d15c4993a5968ffabc94947c13f2aeee14b7b27ed59"]
-source = "GrapheneOS"
+# The release certificate of our build.
+signatures = ["285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61"]
+source = "DiamaneOS"
 hasFsVeritySignatures = false
 
 description = """

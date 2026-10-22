@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Prepare and check the work tree of our catalog. It lists only our own builds.
+"""Prepare and check the work tree of our catalog. It lists only apps signed with our keys.
 
 ./prepare.py WORK                  copy the inventory, scripts and static files into WORK
 ./prepare.py --check WORK KEY.pub  after generate.py: the signed catalog verifies with apps.0's public
-                                   key and lists exactly our packages, with their signers
+                                   key and lists only the inventory, with its signers and single APKs
 
 The inventory is apps/packages/*/common-props.toml. GrapheneOS's apps are not in our catalog: the App
 Store reads GrapheneOS's own catalog for them, mirrored by grapheneos-mirror.py, and refuses our
-packages from it. The App Store also refuses any other package from our catalog (Catalogs.kt).
+packages from it. From our catalog it refuses any package not signed with our keys, or that
+GrapheneOS's catalog lists (Catalogs.kt).
 """
 
 import json
@@ -26,8 +27,14 @@ SIGNIFY = "/usr/bin/signify-openbsd"
 # in Catalogs.kt). Raised with it at each rebase.
 MIN_TIME = 1_792_500_000
 CATALOG = "apps/metadata.1.0.sjson"
-# The packages the App Store takes from our catalog.
-OURS = {"app.grapheneos.apps", "app.grapheneos.camera", "de.diamaneos.auditor"}
+# Our app signing certificates (DIAMANEOS_SIGNERS in Catalogs.kt): App Store, Camera, Auditor.
+SIGNERS = {
+    "559ffb104edd9386a39d512063cb7458c5ec0e29c9b52a91068ce950dd768a47",
+    "285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61",
+    "427bfd360586b829475f37abffd2548d93db3618e45c994de416469ef04bc2ec",
+}
+# GrapheneOS's apps the App Store never lists (EXCLUDED_PACKAGES in Catalogs.kt).
+EXCLUDED = {"app.grapheneos.info", "app.attestation.auditor"}
 
 
 def load_inventory():
@@ -36,9 +43,10 @@ def load_inventory():
     for name in sorted(os.listdir(packages_dir)):
         with open(os.path.join(packages_dir, name, "common-props.toml"), "rb") as f:
             inventory[name] = tomllib.load(f)
-    problems = sorted(set(inventory) - OURS)
+    problems = sorted(name for name in inventory if name.lower() in EXCLUDED)
     problems += [name + " is not source DiamaneOS" for name, p in inventory.items() if p.get("source") != "DiamaneOS"]
-    problems += [name + " has no signers" for name, p in inventory.items() if not p.get("signatures")]
+    problems += [name + " needs one of our signers" for name, p in inventory.items()
+                 if len(p.get("signatures", [])) != 1 or p["signatures"][0] not in SIGNERS]
     problems += [name + " uses the original-package system" for name, p in inventory.items() if "originalPackage" in p]
     if problems:
         raise Exception("not our catalog's packages: " + ", ".join(problems))
@@ -102,11 +110,14 @@ def check(work, key):
             problems.append(name + ": not as the App Store takes our packages")
         elif sorted(package["signatures"]) != sorted(listed["signatures"]):
             problems.append(name + ": signers differ from the inventory")
+        # The App Store parses each APK from our catalog for its signer, and a split does not parse.
+        elif any(v.get("apks") != ["base.apk"] for v in package.get("variants", {}).values()):
+            problems.append(name + ": not a single APK")
     for problem in problems:
         print(problem)
     if problems:
         sys.exit(1)
-    print("our catalog lists only our packages: " + ", ".join(sorted(packages)))
+    print("our catalog lists only our signed packages: " + ", ".join(sorted(packages)))
 
 
 if __name__ == "__main__":

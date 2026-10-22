@@ -1,4 +1,4 @@
-# The release certificate of our build. Test catalogs add their test certificate.
+# The release certificate of our build.
 signatures = ["427bfd360586b829475f37abffd2548d93db3618e45c994de416469ef04bc2ec"]
 source = "DiamaneOS"
 hasFsVeritySignatures = false
