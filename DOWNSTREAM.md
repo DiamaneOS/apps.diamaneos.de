@@ -3,6 +3,7 @@
 - Upstream provenance is in [UPSTREAM.json](UPSTREAM.json). The upstream MIT license is kept in [LICENSE](LICENSE).
 - `prepare.py`, `grapheneos-mirror.py`, `systemd/` and `grapheneos-apps.0.pub` are DiamaneOS additions. The key is GrapheneOS's catalog key, taken from its App Store source.
 - `generate.py` also reads a label written in the manifest (aapt2 prints it only in its `application:` line), as the App Store needs a label in each version.
+- `generate.py` keeps no cache files for the signer and aapt2's output, so every run checks each APK's signer against the inventory.
 - `generate.py` makes no deltas unless `DIAMANEOS_DELTAS=1`. Our App Store has no delta support, and deltas need the `ina` tool.
 - `apps/packages` holds only our own packages. GrapheneOS's packages and their inherited version files were removed: they come from GrapheneOS's catalog.
 - Packages keep their own signing identities. Catalog authentication does not replace APK signature checks.
