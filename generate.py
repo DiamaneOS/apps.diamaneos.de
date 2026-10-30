@@ -118,6 +118,8 @@ def main():
         key_version += 1
 
 SINGLE_THREAD = os.getenv("SINGLE_THREAD", "0") == "1"
+# DiamaneOS: our App Store has no delta support yet, so deltas (and the ina tool) are off unless asked for.
+DELTAS = os.getenv("DIAMANEOS_DELTAS") == "1"
 
 def maybe_parallel(executor, fn, *args):
     if SINGLE_THREAD:
@@ -552,7 +554,8 @@ def process_pkg(packages_dir, pkg_name):
                 package_variants[ver] = props
 
     pruned_package_variants = remove_old_pkg_variants(package_variants)
-    process_deltas(pkg_container_path, pkg_name, {int(v) for v in pruned_package_variants.keys()}, package_variants)
+    if DELTAS:
+        process_deltas(pkg_container_path, pkg_name, {int(v) for v in pruned_package_variants.keys()}, package_variants)
     common_props["variants"] = pruned_package_variants
 
     return pkg_name, common_props
