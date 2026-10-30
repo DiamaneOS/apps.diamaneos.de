@@ -141,22 +141,14 @@ def load_props(dir, name):
 
 aapt2_limiter = threading.Semaphore(os.cpu_count())
 
+# DiamaneOS: no cache files for aapt2's output and the signer. Each run checks every APK itself.
 def load_aapt2_badging(apk_path):
-    cache_path = Path(apk_path + ".aapt2-badging")
-    if cache_path.exists():
-        return cache_path.read_text(encoding="utf-8")
     with aapt2_limiter:
-        res = subprocess.check_output(["aapt2", "dump", "badging", apk_path]).decode()
-    write_text(res, str(cache_path))
-    return res
+        return subprocess.check_output(["aapt2", "dump", "badging", apk_path]).decode()
 
 apksigner_limiter = threading.Semaphore(10) # apksigner runs in a JVM
 
 def load_cert_digest(apk_path):
-    cache_path = Path(apk_path + ".cert-digest")
-    if cache_path.exists():
-        return cache_path.read_text()
-
     with apksigner_limiter:
         apksigner_output = subprocess.check_output(["apksigner", "verify", "--print-certs", "--verbose", apk_path])
     cert_digest = None
@@ -173,7 +165,6 @@ def load_cert_digest(apk_path):
 
     if cert_digest is None:
         raise Exception("didn't find certificate of " + apk_path)
-    write_text(cert_digest, str(cache_path))
     return cert_digest
 
 all_abis = {"arm64-v8a", "x86_64", "armeabi-v7a", "x86"}
