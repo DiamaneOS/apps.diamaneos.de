@@ -8,10 +8,11 @@ ROOT is the served grapheneos/ directory and STATE the job's own state. It needs
 1. Fetches GrapheneOS's catalog, checks its signature with grapheneos-apps.0.pub (signify) and that it
    is not older than the published one.
 2. Fetches every APK the App Store may take from it for arm64-v8a: GrapheneOS's packages without ours
-   and without the excluded ones, as in the App Store's Catalogs.kt. Each .gz must have the catalog's
-   size and unpack to the catalog's size and SHA-256. v4 signatures and icons are not in the catalog:
-   their size and format are checked, and Android checks the v4 signature against the APK. Icons are
-   fetched again only with a new catalog, and a failed icon keeps the previous one.
+   and without the excluded ones, as in the App Store's Catalogs.kt. Each .gz (App Store 36) must have
+   the catalog's size and unpack to the catalog's size and SHA-256. Each .br (App Store 37) must have
+   the catalog's size and SHA-256. v4 signatures and icons are checked against the catalog's size and
+   SHA-256 where it lists them, and their format always. Icons are fetched again only with a new
+   catalog, and a failed icon keeps the previous one.
 3. Only then publishes the catalog bytes unchanged. Files neither this nor the previous catalog lists
    are removed. Packages added, dropped or with other signers than in the previous catalog are logged.
 """
@@ -41,6 +42,7 @@ SIGNIFY = "/usr/bin/signify-openbsd"
 OURS = {"app.grapheneos.apps", "app.grapheneos.camera", "de.diamaneos.auditor"}
 # Info shows GrapheneOS's release news, and our Auditor replaces GrapheneOS's Auditor.
 EXCLUDED = {"app.grapheneos.info", "app.attestation.auditor"}
+SHA256 = re.compile(r"[0-9a-f]{64}")
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+")
 APK = re.compile(r"[A-Za-z0-9_.-]+\.apk")
 ICONS = {"webp": (b"RIFF", 8, b"WEBP"), "png": (b"\x89PNG\r\n\x1a\n", 0, b"")}
@@ -136,23 +138,54 @@ def needed_files(catalog):
         icon = package.get("iconType")
         # An unknown icon type only leaves the package without an icon.
         if icon in ICONS:
-            files.append(("packages/" + name + "/icon." + icon, "icon", icon))
+            files.append(("packages/" + name + "/icon." + icon, "icon", (icon,) + sized(package, "iconSize", "iconSha256")))
         for code, variant in sorted(package["variants"].items()):
             if not re.fullmatch(r"[1-9][0-9]{0,18}", code):
                 raise Refused(name + ": unexpected version " + repr(code))
             if "abis" in variant and ABI not in variant["abis"]:
                 continue
-            rows = list(zip(variant["apks"], variant["apkHashes"], variant["apkSizes"], variant["apkGzSizes"]))
-            if not rows or len(rows) != len(variant["apks"]):
+            columns = ("apks", "apkHashes", "apkSizes", "apkGzSizes", "apkBrHashes", "apkBrSizes")
+            rows = list(zip(*(variant.get(c, []) for c in columns)))
+            if not rows or any(len(variant.get(c, [])) != len(rows) for c in columns):
                 raise Refused(name + "/" + code + ": unexpected APK list")
-            for apk, digest, size, gz_size in rows:
-                if not APK.fullmatch(apk) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            v4 = variant.get("hasV4Signatures", False)
+            for i, (apk, digest, size, gz_size, br_digest, br_size) in enumerate(rows):
+                if not APK.fullmatch(apk) or not all(map(SHA256.fullmatch, (digest, br_digest))):
                     raise Refused(name + "/" + code + ": unexpected APK entry")
                 path = "packages/" + name + "/" + code + "/" + apk
                 files.append((path + ".gz", "apk", (digest, size, gz_size)))
-                if variant.get("hasV4Signatures", False):
-                    files.append((path + ".idsig", "idsig", None))
+                files.append((path + ".br", "br", (br_size, br_digest)))
+                if v4:
+                    files.append((path + ".idsig", "idsig", sized(variant, "v4SignatureSizes", "v4SignatureHashes", i)))
     return files
+
+
+def sized(entry, size_key, hash_key, index=None):
+    """(size, SHA-256) the catalog gives for a file, or () where it gives none."""
+    if size_key not in entry and hash_key not in entry:
+        return ()
+    size, digest = entry.get(size_key), entry.get(hash_key)
+    if index is not None:
+        size = size[index] if isinstance(size, list) and index < len(size) else None
+        digest = digest[index] if isinstance(digest, list) and index < len(digest) else None
+    if not isinstance(size, int) or isinstance(size, bool) or size <= 0 or not SHA256.fullmatch(str(digest)):
+        raise Refused("unexpected " + size_key + " or " + hash_key)
+    return size, digest
+
+
+def check_exact(path, expected):
+    """The file has the catalog's size and SHA-256, where the catalog gives them."""
+    if not expected:
+        return
+    size, digest = expected
+    if os.path.getsize(path) != size:
+        raise Refused(path + ": size differs from the catalog")
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while block := f.read(CHUNK):
+            h.update(block)
+    if h.hexdigest() != digest:
+        raise Refused(path + ": does not match the signed catalog")
 
 
 def check_apk(path, expected):
@@ -198,14 +231,22 @@ def check_icon(path, kind):
 
 
 def check(path, kind, expected):
-    {"apk": lambda: check_apk(path, expected), "idsig": lambda: check_idsig(path),
-     "icon": lambda: check_icon(path, expected)}[kind]()
+    if kind == "apk":
+        check_apk(path, expected)
+    elif kind == "br":
+        check_exact(path, expected)
+    elif kind == "idsig":
+        check_exact(path, expected)
+        check_idsig(path)
+    else:
+        check_exact(path, expected[1:])
+        check_icon(path, expected[0])
 
 
 def mirror_file(root, path, kind, expected, verified, new_catalog):
     """Fetches and checks one file unless it is already in place. Returns the bytes fetched."""
     target = os.path.join(root, path)
-    key = [kind, list(expected)] if kind == "apk" else [kind]
+    key = [kind, list(expected)]
     if kind == "icon":
         if os.path.isfile(target) and not new_catalog:
             return 0
@@ -227,7 +268,9 @@ def mirror_file(root, path, kind, expected, verified, new_catalog):
 def fetch_file(target, path, kind, expected, verified, key):
     os.makedirs(os.path.dirname(target), exist_ok=True)
     tmp = target + ".tmp"
-    limit = {"apk": expected[2] if kind == "apk" else 0, "idsig": MAX_IDSIG, "icon": MAX_ICON}[kind]
+    limit = {"apk": lambda: expected[2], "br": lambda: expected[0],
+             "idsig": lambda: min(expected[0], MAX_IDSIG) if expected else MAX_IDSIG,
+             "icon": lambda: min(expected[1], MAX_ICON) if len(expected) > 1 else MAX_ICON}[kind]()
     try:
         with open(tmp, "wb") as out:
             loaded = fetch(path, limit, out)

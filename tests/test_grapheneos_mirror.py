@@ -63,13 +63,19 @@ class Upstream:
 
     def apk(self, name, code, content, abis=None, v4=True, apk='base.apk', **extra):
         gz = gzip.compress(content, mtime=0)
+        # The mirror never unpacks a .br, so any bytes stand in for one.
+        br = b'brotli ' + content
         path = f'packages/{name}/{code}/{apk}'
         self.files[path + '.gz'] = gz
+        self.files[path + '.br'] = br
+        variant = {'apks': [apk], 'apkHashes': [hashlib.sha256(content).hexdigest()],
+                   'apkSizes': [len(content)], 'apkGzSizes': [len(gz)],
+                   'apkBrSizes': [len(br)], 'apkBrHashes': [hashlib.sha256(br).hexdigest()],
+                   'hasV4Signatures': v4, 'label': name, 'channel': 'stable', **extra}
         if v4:
             self.files[path + '.idsig'] = idsig()
-        variant = {'apks': [apk], 'apkHashes': [hashlib.sha256(content).hexdigest()],
-                   'apkSizes': [len(content)], 'apkGzSizes': [len(gz)], 'apkBrSizes': [len(gz)],
-                   'hasV4Signatures': v4, 'label': name, 'channel': 'stable', **extra}
+            variant['v4SignatureSizes'] = [len(idsig())]
+            variant['v4SignatureHashes'] = [hashlib.sha256(idsig()).hexdigest()]
         if abis:
             variant['abis'] = abis
         package = self.packages.setdefault(name, {'signatures': ['aa' * 32], 'source': 'GrapheneOS', 'variants': {}})
@@ -166,9 +172,11 @@ class MirrorTests(unittest.TestCase):
         output = self.run_mirror()
         self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), catalog)
         self.assertEqual(self.files(), ['metadata.1.0.sjson',
+                                        'packages/app.vanadium.browser/1/base.apk.br',
                                         'packages/app.vanadium.browser/1/base.apk.gz',
                                         'packages/app.vanadium.browser/1/base.apk.idsig',
                                         'packages/app.vanadium.browser/icon.webp',
+                                        'packages/com.google.android.gms/5/base.apk.br',
                                         'packages/com.google.android.gms/5/base.apk.gz'])
         self.assertEqual(self.upstream.files['packages/app.vanadium.browser/1/base.apk.gz'],
                          (self.root / 'packages/app.vanadium.browser/1/base.apk.gz').read_bytes())
@@ -247,7 +255,10 @@ class MirrorTests(unittest.TestCase):
         u.time += 1
         u.catalog()
         self.run_mirror()
-        self.assertEqual(self.files(), ['metadata.1.0.sjson', 'packages/app.vanadium.config/2/base.apk.gz',
+        self.assertEqual(self.files(), ['metadata.1.0.sjson',
+                                        'packages/app.vanadium.config/2/base.apk.br',
+                                        'packages/app.vanadium.config/2/base.apk.gz',
+                                        'packages/app.vanadium.config/3/base.apk.br',
                                         'packages/app.vanadium.config/3/base.apk.gz'])
 
     def test_published_file_changed_under_the_same_name_refused(self):
@@ -334,9 +345,12 @@ class MirrorTests(unittest.TestCase):
             self.run_mirror()
 
     def test_bad_v4_signature_file_refused(self):
-        self.upstream.apk('app.vanadium.config', 1, b'one')
+        bad = b'\x02\x00\x00\x00' + b'\xff' * 12
+        variant = self.upstream.apk('app.vanadium.config', 1, b'one')['variants']['1']
+        # Listed in the catalog with its own size and hash, so only the format check refuses it.
+        variant['v4SignatureSizes'], variant['v4SignatureHashes'] = [len(bad)], [hashlib.sha256(bad).hexdigest()]
         self.upstream.catalog()
-        self.upstream.files['packages/app.vanadium.config/1/base.apk.idsig'] = b'\x02\x00\x00\x00' + b'\xff' * 12
+        self.upstream.files['packages/app.vanadium.config/1/base.apk.idsig'] = bad
         with self.assertRaisesRegex(self.mirror.Refused, 'v4'):
             self.run_mirror()
 
@@ -377,6 +391,53 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(module.EXCLUDED, self.mirror.EXCLUDED)
         floor = re.search(r'DiamaneOS\(BuildConfig\.REPO_PUBLIC_KEY, [^)]*, ([0-9_]+)L\)', text)
         self.assertEqual(int(floor[1].replace('_', '')), module.MIN_TIME)
+
+    def test_brotli_files_are_mirrored_and_checked(self):
+        self.standard()
+        self.upstream.catalog()
+        self.run_mirror()
+        self.assertIn('packages/app.vanadium.browser/1/base.apk.br', self.files())
+        self.assertIn('packages/app.vanadium.browser/1/base.apk.gz', self.files())
+        self.upstream.time += 1
+        self.upstream.apk('app.vanadium.browser', 3, b'browser three', abis=['arm64-v8a'])
+        self.upstream.files['packages/app.vanadium.browser/3/base.apk.br'] = b'brotli browser thrEe'
+        published = (self.root / 'metadata.1.0.sjson').read_bytes()
+        self.upstream.catalog()
+        with self.assertRaises(self.mirror.Refused):
+            self.run_mirror()
+        self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), published)
+
+    def test_catalog_without_brotli_entries_refused(self):
+        self.standard()
+        del self.upstream.packages['app.vanadium.browser']['variants']['1']['apkBrHashes']
+        self.upstream.catalog()
+        with self.assertRaisesRegex(self.mirror.Refused, 'unexpected APK list'):
+            self.run_mirror()
+        self.assertEqual(self.files(), [])
+
+    def test_v4_signature_not_matching_the_catalog_refused(self):
+        self.standard()
+        variant = self.upstream.packages['app.vanadium.browser']['variants']['1']
+        variant['v4SignatureHashes'] = [hashlib.sha256(b'another').hexdigest()]
+        self.upstream.catalog()
+        with self.assertRaisesRegex(self.mirror.Refused, 'idsig.tmp: does not match'):
+            self.run_mirror()
+
+    def test_icon_not_matching_the_catalog_is_not_published(self):
+        self.standard()
+        package = self.upstream.packages['app.vanadium.browser']
+        package['iconSize'] = len(webp())
+        package['iconSha256'] = hashlib.sha256(b'another icon').hexdigest()
+        self.upstream.catalog()
+        out = self.run_mirror()
+        self.assertIn('icon kept as it was', out)
+        self.assertNotIn('packages/app.vanadium.browser/icon.webp', self.files())
+        package['iconSha256'] = hashlib.sha256(webp()).hexdigest()
+        self.upstream.time += 1
+        self.upstream.catalog()
+        self.run_mirror()
+        self.assertIn('packages/app.vanadium.browser/icon.webp', self.files())
+
 
 if __name__ == '__main__':
     unittest.main()
