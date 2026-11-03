@@ -10,9 +10,10 @@ ROOT is the served grapheneos/ directory and STATE the job's own state. It needs
 2. Fetches every APK the App Store may take from it for arm64-v8a: GrapheneOS's packages without ours
    and without the excluded ones, as in the App Store's Catalogs.kt. Each .gz (App Store 36) must have
    the catalog's size and unpack to the catalog's size and SHA-256. Each .br (App Store 37) must have
-   the catalog's size and SHA-256. v4 signatures and icons are checked against the catalog's size and
-   SHA-256 where it lists them, and their format always. Icons are fetched again only with a new
-   catalog, and a failed icon keeps the previous one.
+   the catalog's size and SHA-256, and so must each .ina (a delta from an older version) with a size
+   above 0. v4 signatures and icons are checked against the catalog's size and SHA-256 where it lists
+   them, and their format always. Icons are fetched again only with a new catalog, and a failed icon
+   keeps the previous one.
 3. Only then publishes the catalog bytes unchanged. Files neither this nor the previous catalog lists
    are removed. Packages added, dropped or with other signers than in the previous catalog are logged.
 """
@@ -43,6 +44,7 @@ OURS = {"app.grapheneos.apps", "app.grapheneos.camera", "de.diamaneos.auditor"}
 # Info shows GrapheneOS's release news, and our Auditor replaces GrapheneOS's Auditor.
 EXCLUDED = {"app.grapheneos.info", "app.attestation.auditor"}
 SHA256 = re.compile(r"[0-9a-f]{64}")
+VERSION = re.compile(r"[1-9][0-9]{0,18}")
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+")
 APK = re.compile(r"[A-Za-z0-9_.-]+\.apk")
 ICONS = {"webp": (b"RIFF", 8, b"WEBP"), "png": (b"\x89PNG\r\n\x1a\n", 0, b"")}
@@ -140,7 +142,7 @@ def needed_files(catalog):
         if icon in ICONS:
             files.append(("packages/" + name + "/icon." + icon, "icon", (icon,) + sized(package, "iconSize", "iconSha256")))
         for code, variant in sorted(package["variants"].items()):
-            if not re.fullmatch(r"[1-9][0-9]{0,18}", code):
+            if not VERSION.fullmatch(code):
                 raise Refused(name + ": unexpected version " + repr(code))
             if "abis" in variant and ABI not in variant["abis"]:
                 continue
@@ -149,15 +151,38 @@ def needed_files(catalog):
             if not rows or any(len(variant.get(c, [])) != len(rows) for c in columns):
                 raise Refused(name + "/" + code + ": unexpected APK list")
             v4 = variant.get("hasV4Signatures", False)
+            apk_deltas = deltas(name + "/" + code, variant, len(rows))
             for i, (apk, digest, size, gz_size, br_digest, br_size) in enumerate(rows):
                 if not APK.fullmatch(apk) or not all(map(SHA256.fullmatch, (digest, br_digest))):
                     raise Refused(name + "/" + code + ": unexpected APK entry")
                 path = "packages/" + name + "/" + code + "/" + apk
                 files.append((path + ".gz", "apk", (digest, size, gz_size)))
                 files.append((path + ".br", "br", (br_size, br_digest)))
+                for source, delta_size, delta_digest in apk_deltas[i]:
+                    files.append((path + "." + source + ".ina", "ina", (delta_size, delta_digest)))
                 if v4:
                     files.append((path + ".idsig", "idsig", sized(variant, "v4SignatureSizes", "v4SignatureHashes", i)))
     return files
+
+
+def deltas(where, variant, count):
+    """For each of count APKs, (source version, size, SHA-256) of its deltas, read as Repo.kt reads them."""
+    sources = variant.get("availableDeltaVersions", [])
+    columns = [variant.get(c, []) for c in ("apkDeltaSizes", "apkDeltaHashes", "apkDeltaSrcHashes")]
+    if any(len(column) != len(sources) * count for column in columns):
+        raise Refused(where + ": unexpected delta list")
+    found = [[] for _ in range(count)]
+    for at, (size, digest, source_digest) in enumerate(zip(*columns)):
+        source = sources[at % len(sources)]
+        if type(source) is not int or not VERSION.fullmatch(str(source)) or type(size) is not int or size < 0:
+            raise Refused(where + ": unexpected delta entry")
+        # A size of 0 has no delta: the App Store takes the .br and ignores the hashes.
+        if size == 0:
+            continue
+        if not all(isinstance(d, str) and SHA256.fullmatch(d) for d in (digest, source_digest)):
+            raise Refused(where + ": unexpected delta entry")
+        found[at // len(sources)].append((str(source), size, digest))
+    return found
 
 
 def sized(entry, size_key, hash_key, index=None):
@@ -233,7 +258,7 @@ def check_icon(path, kind):
 def check(path, kind, expected):
     if kind == "apk":
         check_apk(path, expected)
-    elif kind == "br":
+    elif kind in ("br", "ina"):
         check_exact(path, expected)
     elif kind == "idsig":
         check_exact(path, expected)
@@ -268,7 +293,7 @@ def mirror_file(root, path, kind, expected, verified, new_catalog):
 def fetch_file(target, path, kind, expected, verified, key):
     os.makedirs(os.path.dirname(target), exist_ok=True)
     tmp = target + ".tmp"
-    limit = {"apk": lambda: expected[2], "br": lambda: expected[0],
+    limit = {"apk": lambda: expected[2], "br": lambda: expected[0], "ina": lambda: expected[0],
              "idsig": lambda: min(expected[0], MAX_IDSIG) if expected else MAX_IDSIG,
              "icon": lambda: min(expected[1], MAX_ICON) if len(expected) > 1 else MAX_ICON}[kind]()
     try:

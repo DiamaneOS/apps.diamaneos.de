@@ -58,6 +58,7 @@ class Upstream:
     def __init__(self):
         self.files, self.packages, self.time = {}, {}, 1_780_000_000
         self.redirect = set()
+        self.requested = []
         # Paths whose connection drops before the whole file is sent.
         self.truncated = set()
 
@@ -81,6 +82,24 @@ class Upstream:
         package = self.packages.setdefault(name, {'signatures': ['aa' * 32], 'source': 'GrapheneOS', 'variants': {}})
         package['variants'][str(code)] = variant
         return package
+
+    def delta(self, name, code, sources, apk='base.apk'):
+        """Adds deltas to one APK: {source version: content, or None for a size of 0}."""
+        variant = self.packages[name]['variants'][str(code)]
+        variant.setdefault('availableDeltaVersions', []).extend(sources)
+        for column in ('apkDeltaSizes', 'apkDeltaHashes', 'apkDeltaSrcHashes'):
+            variant.setdefault(column, [])
+        for source, content in sources.items():
+            if content is None:
+                variant['apkDeltaSizes'].append(0)
+                variant['apkDeltaHashes'].append('')
+                variant['apkDeltaSrcHashes'].append('')
+                continue
+            self.files[f'packages/{name}/{code}/{apk}.{source}.ina'] = content
+            variant['apkDeltaSizes'].append(len(content))
+            variant['apkDeltaHashes'].append(hashlib.sha256(content).hexdigest())
+            variant['apkDeltaSrcHashes'].append(hashlib.sha256(b'source %d' % source).hexdigest())
+        return variant
 
     def catalog(self, secret=SECRET):
         body = json.dumps({'time': self.time, 'packages': self.packages, 'fsVerityCerts': {}},
@@ -114,6 +133,7 @@ class MirrorTests(unittest.TestCase):
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 path = self.path.lstrip('/')
+                upstream.requested.append(path)
                 if path in upstream.redirect:
                     self.send_response(302)
                     self.send_header('Location', '/elsewhere')
@@ -406,6 +426,132 @@ class MirrorTests(unittest.TestCase):
         with self.assertRaises(self.mirror.Refused):
             self.run_mirror()
         self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), published)
+
+    def test_deltas_are_mirrored_and_a_size_of_0_is_not_fetched(self):
+        u = self.upstream
+        u.apk('app.vanadium.browser', 3, b'browser three', abis=['arm64-v8a'])
+        u.delta('app.vanadium.browser', 3, {2: b'from two', 1: None})
+        u.files['packages/app.vanadium.browser/3/base.apk.1.ina'] = b'not listed'
+        u.catalog()
+        self.run_mirror()
+        self.assertEqual((self.root / 'packages/app.vanadium.browser/3/base.apk.2.ina').read_bytes(), b'from two')
+        self.assertNotIn('packages/app.vanadium.browser/3/base.apk.1.ina', self.files())
+        self.assertNotIn('packages/app.vanadium.browser/3/base.apk.1.ina', u.requested)
+        self.assertIn(' 0 MB fetched, 0 removed', self.run_mirror())
+
+    def test_deltas_belong_to_their_apk_and_source(self):
+        """The catalog lists them by APK, then by source version (Repo.kt)."""
+        u = self.upstream
+        u.apk('app.vanadium.browser', 3, b'base', v4=False)
+        variant = u.packages['app.vanadium.browser']['variants']['3']
+        split = hashlib.sha256(b'split').hexdigest()
+        variant['apks'].append('split.apk')
+        variant['apkHashes'].append(split)
+        variant['apkSizes'].append(5)
+        variant['apkGzSizes'].append(1)
+        variant['apkBrSizes'].append(1)
+        variant['apkBrHashes'].append(split)
+        u.delta('app.vanadium.browser', 3, {2: b'base from 2', 1: None})
+        variant['availableDeltaVersions'] = [2, 1]
+        sizes = variant['apkDeltaSizes'] + [12, 12]
+        hashes = variant['apkDeltaHashes'] + [hashlib.sha256(b'split from ' + n).hexdigest() for n in (b'2', b'1')]
+        variant.update(apkDeltaSizes=sizes, apkDeltaHashes=hashes,
+                       apkDeltaSrcHashes=variant['apkDeltaSrcHashes'] + [split, split])
+        wanted = [(f[0], f[2][0]) for f in self.mirror.needed_files({'packages': u.packages}) if f[1] == 'ina']
+        self.assertEqual(wanted, [('packages/app.vanadium.browser/3/base.apk.2.ina', 11),
+                                  ('packages/app.vanadium.browser/3/split.apk.2.ina', 12),
+                                  ('packages/app.vanadium.browser/3/split.apk.1.ina', 12)])
+
+    def test_delta_not_matching_the_catalog_keeps_the_published_catalog(self):
+        u = self.upstream
+        u.apk('app.vanadium.config', 1, b'one', v4=False)
+        first = u.catalog()
+        self.run_mirror()
+        path = 'packages/app.vanadium.config/2/base.apk.1.ina'
+        for served, refusal in ((b'from ONE', 'does not match'), (b'from', 'size'), (b'from one, longer', 'exceeds')):
+            with self.subTest(served=served):
+                u.packages['app.vanadium.config']['variants'].pop('2', None)
+                u.apk('app.vanadium.config', 2, b'two', v4=False)
+                u.delta('app.vanadium.config', 2, {1: b'from one'})
+                u.time += 1
+                u.catalog()
+                u.files[path] = served
+                with self.assertRaisesRegex(self.mirror.Refused, refusal):
+                    self.run_mirror()
+                self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), first)
+                self.assertNotIn(path, self.files())
+                self.assertNotIn(path + '.tmp', self.files())
+
+    def test_missing_or_dropped_delta_keeps_the_published_catalog(self):
+        u = self.upstream
+        u.apk('app.vanadium.config', 1, b'one', v4=False)
+        first = u.catalog()
+        self.run_mirror()
+        u.apk('app.vanadium.config', 2, b'two', v4=False)
+        u.delta('app.vanadium.config', 2, {1: b'from one'})
+        u.time += 1
+        u.catalog()
+        u.truncated.add('packages/app.vanadium.config/2/base.apk.1.ina')
+        with self.assertRaisesRegex(self.mirror.Refused, 'incomplete'):
+            self.run_mirror()
+        del u.files['packages/app.vanadium.config/2/base.apk.1.ina']
+        with self.assertRaisesRegex(self.mirror.Refused, 'HTTP 404'):
+            self.run_mirror()
+        self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), first)
+
+    def test_unexpected_delta_lists_refused(self):
+        changes = {'sizes too short': ('apkDeltaSizes', []),
+                   'hashes too long': ('apkDeltaHashes', ['aa' * 32] * 2),
+                   'no source hashes': ('apkDeltaSrcHashes', []),
+                   'no versions': ('availableDeltaVersions', []),
+                   'version text': ('availableDeltaVersions', ['1']),
+                   'path in a version': ('availableDeltaVersions', ['1/../../x']),
+                   'version 0': ('availableDeltaVersions', [0]),
+                   'negative size': ('apkDeltaSizes', [-1]),
+                   'size text': ('apkDeltaSizes', ['8']),
+                   'size true': ('apkDeltaSizes', [True]),
+                   'bad hash': ('apkDeltaHashes', ['AA' * 32]),
+                   'empty source hash': ('apkDeltaSrcHashes', ['']),
+                   'number as hash': ('apkDeltaHashes', [1])}
+        for name, (column, value) in changes.items():
+            with self.subTest(name):
+                self.upstream.packages.clear()
+                self.upstream.apk('app.vanadium.config', 2, b'two', v4=False)
+                self.upstream.delta('app.vanadium.config', 2, {1: b'from one'})[column] = value
+                self.upstream.catalog()
+                with self.assertRaisesRegex(self.mirror.Refused, 'unexpected delta'):
+                    self.run_mirror()
+                self.assertEqual(self.files(), [])
+
+    def test_published_delta_changed_under_the_same_name_refused(self):
+        self.upstream.apk('app.vanadium.config', 2, b'two', v4=False)
+        self.upstream.delta('app.vanadium.config', 2, {1: b'from one'})
+        self.upstream.catalog()
+        self.run_mirror()
+        (self.state / 'verified.json').unlink()
+        (self.root / 'packages/app.vanadium.config/2/base.apk.1.ina').write_bytes(b'from ONE')
+        with self.assertRaisesRegex(self.mirror.Refused, 'does not match'):
+            self.run_mirror()
+
+    def test_deltas_of_the_previous_catalog_stay_for_one_update(self):
+        u = self.upstream
+        path = 'packages/app.vanadium.config/2/base.apk.1.ina'
+        u.apk('app.vanadium.config', 2, b'two', v4=False)
+        u.delta('app.vanadium.config', 2, {1: b'from one'})
+        u.catalog()
+        self.run_mirror()
+        del u.packages['app.vanadium.config']['variants']['2']
+        u.apk('app.vanadium.config', 3, b'three', v4=False)
+        u.time += 1
+        u.catalog()
+        self.run_mirror()
+        self.assertIn(path, self.files())
+        del u.packages['app.vanadium.config']['variants']['3']
+        u.apk('app.vanadium.config', 4, b'four', v4=False)
+        u.time += 1
+        u.catalog()
+        self.run_mirror()
+        self.assertNotIn(path, self.files())
 
     def test_catalog_without_brotli_entries_refused(self):
         self.standard()
