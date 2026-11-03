@@ -118,7 +118,7 @@ def main():
         key_version += 1
 
 SINGLE_THREAD = os.getenv("SINGLE_THREAD", "0") == "1"
-# DiamaneOS: our App Store has no delta support yet, so deltas (and the ina tool) are off unless asked for.
+# DiamaneOS: deltas need the ina tool, so they are off unless asked for.
 DELTAS = os.getenv("DIAMANEOS_DELTAS") == "1"
 
 def maybe_parallel(executor, fn, *args):
