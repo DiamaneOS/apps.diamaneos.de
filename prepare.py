@@ -26,7 +26,7 @@ SCRIPTS = ["generate.py", "compress-apks", "process-static", "import-apks.py"]
 SIGNIFY = "/usr/bin/signify-openbsd"
 # The App Store refuses an older catalog of ours on a phone without one (Catalog.DiamaneOS.minTimestamp
 # in Catalogs.kt). Raised with it at each rebase.
-MIN_TIME = 1_792_500_000
+MIN_TIME = 1_792_550_000
 CATALOG = "apps/metadata.1.0.sjson"
 # Our app signing certificates (DIAMANEOS_SIGNERS in Catalogs.kt): App Store, Camera, Auditor.
 SIGNERS = {
