@@ -2,6 +2,10 @@
 signatures = ["285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61"]
 source = "DiamaneOS"
 hasFsVeritySignatures = false
+# Updated together with CameraProcessor (LINKED in prepare.py): an update of Camera also takes a newer
+# CameraProcessor in the same install, and both follow one release channel.
+group = "camera"
+deps = ["de.diamaneos.camera.processor"]
 
 description = """
 A modern camera app focused on privacy and security. It includes modes for capturing images, videos and QR / barcode scanning along with additional modes based on CameraX vendor extensions (Portrait, HDR, Night, Face Retouch and Auto) on devices where they're available.

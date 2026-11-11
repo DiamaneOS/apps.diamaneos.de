@@ -65,8 +65,9 @@ class PrepareTests(unittest.TestCase):
         packages = {}
         for n, p in self.prepare.load_inventory().items():
             packages[n] = {'source': 'DiamaneOS', 'signatures': p['signatures'], 'variants': {}}
-            if 'isTopLevel' in p:
-                packages[n]['isTopLevel'] = p['isTopLevel']
+            for key in ('isTopLevel', 'group', 'deps'):
+                if key in p:
+                    packages[n][key] = p[key]
             if (REPO / 'apps/packages' / n / 'icon.webp').is_file():
                 packages[n]['iconType'] = 'webp'
         return packages
@@ -109,6 +110,36 @@ class PrepareTests(unittest.TestCase):
     def test_check_accepts_our_catalog(self):
         self.write(self.ours())
         self.prepare.check(str(self.work), str(self.key))
+
+    def test_camera_and_its_processor_stay_linked(self):
+        # Camera takes a newer CameraProcessor in its install, both in one group, CameraProcessor names nothing.
+        inventory = self.prepare.load_inventory()
+        self.assertEqual(inventory['app.grapheneos.camera']['group'], 'camera')
+        self.assertEqual(inventory['app.grapheneos.camera']['deps'], ['de.diamaneos.camera.processor'])
+        self.assertEqual(inventory['de.diamaneos.camera.processor']['group'], 'camera')
+        self.assertNotIn('deps', inventory['de.diamaneos.camera.processor'])
+        version = {'apks': ['base.apk'], 'label': 'Camera'}
+        changes = [
+            ('app.grapheneos.camera', lambda p: p.pop('deps')),
+            ('app.grapheneos.camera', lambda p: p.update(deps=['de.diamaneos.camera.processor 3'])),
+            ('app.grapheneos.camera', lambda p: p.update(deps2=['de.diamaneos.camera.processor'])),
+            ('app.grapheneos.camera', lambda p: p.update(group='other')),
+            ('app.grapheneos.camera', lambda p: p['variants'].update({'9310': dict(version, deps=[])})),
+            ('de.diamaneos.camera.processor', lambda p: p.pop('group')),
+            ('de.diamaneos.camera.processor', lambda p: p.update(deps=['app.grapheneos.camera'])),
+            ('de.diamaneos.camera.processor', lambda p: p['variants'].update({'2': dict(version, deps2=[])})),
+        ]
+        for name, change in changes:
+            packages = self.ours()
+            change(packages[name])
+            self.write(packages)
+            with self.assertRaises(SystemExit, msg=name):
+                self.prepare.check(str(self.work), str(self.key))
+        packages = self.ours()
+        del packages['de.diamaneos.camera.processor']
+        self.write(packages)
+        with self.assertRaises(SystemExit):
+            self.prepare.check(str(self.work), str(self.key))
 
     def test_check_requires_a_label_in_each_version(self):
         version = {'apks': ['base.apk'], 'label': 'Camera processing'}

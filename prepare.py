@@ -41,6 +41,15 @@ SIGNERS = {
 PINNED = {
     "com.fps.camera": ("0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470", ["de.diamaneos.fairphone_camera"]),
 }
+# Packages the App Store updates together. Each lists its group (one release channel for all of it) and the
+# dependencies it names without a version, so an update of it also takes a newer dependency in the same install.
+# Camera names CameraProcessor. CameraProcessor names nothing: with Camera as its dependency, a user who disables
+# Camera would see a missing dependency at each CameraProcessor update. When both are outdated, the App Store's
+# update of all apps installs them together anyway, through Camera's dependency.
+LINKED = {
+    "app.grapheneos.camera": ("camera", ["de.diamaneos.camera.processor"]),
+    "de.diamaneos.camera.processor": ("camera", None),
+}
 # GrapheneOS's apps the App Store never lists (EXCLUDED_PACKAGES in Catalogs.kt).
 EXCLUDED = {"app.grapheneos.info", "app.attestation.auditor"}
 # The App Store reads at most 1 MiB of an icon (DownloadIconLoader.kt).
@@ -144,12 +153,19 @@ def check(work, key):
         if name in PINNED and any(not isinstance(v, dict) or v.get("features") != PINNED[name][1]
                                   for v in package.get("variants", {}).values()):
             problems.append(name + ": a version not limited to " + ", ".join(PINNED[name][1]))
+        # Linked packages keep their group and dependencies, and no version names others.
+        if name in LINKED and (package.get("group") != LINKED[name][0] or package.get("deps") != LINKED[name][1]
+                               or "deps2" in package
+                               or any(not isinstance(v, dict) or "deps" in v or "deps2" in v
+                                      for v in package.get("variants", {}).values())):
+            problems.append(name + ": not linked as LINKED says")
         # The App Store reads each version's label and refuses the whole catalog without one (RPackage in Repo.kt).
         if any(not isinstance(v, dict) or not isinstance(v.get("label"), str) or not v["label"].strip()
                for v in package.get("variants", {}).values()):
             problems.append(name + ": a version without a label")
         if listed is not None and (problem := icon_problem(work, name, package)):
             problems.append(problem)
+    problems += [name + ": missing, but linked" for name in LINKED if name not in packages]
     for problem in problems:
         print(problem)
     if problems:
