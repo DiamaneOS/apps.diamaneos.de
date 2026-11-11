@@ -34,6 +34,13 @@ SIGNERS = {
     "285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61",
     "427bfd360586b829475f37abffd2548d93db3618e45c994de416469ef04bc2ec",
 }
+# Other makers' apps our catalog offers (PINNED_PACKAGES in Catalogs.kt): each name with its one signer, and
+# the system features every version of it must list (the App Store offers a version only on an OS build that
+# declares them). com.fps.camera: Fairphone's own camera app, signed by TCL. It needs the camera algorithm
+# service that FP6 builds declare with de.diamaneos.fairphone_camera.
+PINNED = {
+    "com.fps.camera": ("0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470", ["de.diamaneos.fairphone_camera"]),
+}
 # GrapheneOS's apps the App Store never lists (EXCLUDED_PACKAGES in Catalogs.kt).
 EXCLUDED = {"app.grapheneos.info", "app.attestation.auditor"}
 # The App Store reads at most 1 MiB of an icon (DownloadIconLoader.kt).
@@ -49,7 +56,9 @@ def load_inventory():
     problems = sorted(name for name in inventory if name.lower() in EXCLUDED)
     problems += [name + " is not source DiamaneOS" for name, p in inventory.items() if p.get("source") != "DiamaneOS"]
     problems += [name + " needs one of our signers" for name, p in inventory.items()
-                 if len(p.get("signatures", [])) != 1 or p["signatures"][0] not in SIGNERS]
+                 if name not in PINNED and (len(p.get("signatures", [])) != 1 or p["signatures"][0] not in SIGNERS)]
+    problems += [name + " needs its pinned signer" for name, p in inventory.items()
+                 if name in PINNED and p.get("signatures") != [PINNED[name][0]]]
     problems += [name + " uses the original-package system" for name, p in inventory.items() if "originalPackage" in p]
     if problems:
         raise Exception("not our catalog's packages: " + ", ".join(problems))
@@ -131,6 +140,10 @@ def check(work, key):
         # The App Store parses each APK from our catalog for its signer, and a split does not parse.
         elif any(v.get("apks") != ["base.apk"] for v in package.get("variants", {}).values()):
             problems.append(name + ": not a single APK")
+        # A pinned maker's app is offered only on OS builds with its features.
+        if name in PINNED and any(not isinstance(v, dict) or v.get("features") != PINNED[name][1]
+                                  for v in package.get("variants", {}).values()):
+            problems.append(name + ": a version not limited to " + ", ".join(PINNED[name][1]))
         # The App Store reads each version's label and refuses the whole catalog without one (RPackage in Repo.kt).
         if any(not isinstance(v, dict) or not isinstance(v.get("label"), str) or not v["label"].strip()
                for v in package.get("variants", {}).values()):
@@ -141,7 +154,7 @@ def check(work, key):
         print(problem)
     if problems:
         sys.exit(1)
-    print("our catalog lists only our signed packages: " + ", ".join(sorted(packages)))
+    print("our catalog lists only our signed packages and its pinned makers' apps: " + ", ".join(sorted(packages)))
 
 
 if __name__ == "__main__":

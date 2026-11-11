@@ -41,7 +41,8 @@ class PrepareTests(unittest.TestCase):
             'app.grapheneos.apps': ['559ffb104edd9386a39d512063cb7458c5ec0e29c9b52a91068ce950dd768a47'],
             'app.grapheneos.camera': ['285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61'],
             'de.diamaneos.camera.processor': ['285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61'],
-            'de.diamaneos.auditor': ['427bfd360586b829475f37abffd2548d93db3618e45c994de416469ef04bc2ec']})
+            'de.diamaneos.auditor': ['427bfd360586b829475f37abffd2548d93db3618e45c994de416469ef04bc2ec'],
+            'com.fps.camera': ['0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470']})
 
     def test_prepare_drops_other_packages_and_keeps_versions(self):
         (self.work / 'apps/packages/app.vanadium.browser/1').mkdir(parents=True)
@@ -78,7 +79,7 @@ class PrepareTests(unittest.TestCase):
 
     def test_every_app_on_the_main_screen_has_an_icon(self):
         self.assertEqual(sorted(n for n, p in self.ours().items() if 'iconType' in p),
-                         ['app.grapheneos.apps', 'app.grapheneos.camera', 'de.diamaneos.auditor'])
+                         ['app.grapheneos.apps', 'app.grapheneos.camera', 'com.fps.camera', 'de.diamaneos.auditor'])
 
     def test_check_refuses_missing_or_unusable_icons(self):
         icon = self.work / 'apps/packages/de.diamaneos.auditor/icon.webp'
@@ -155,6 +156,37 @@ class PrepareTests(unittest.TestCase):
         props.parent.rename(props.parent.with_name('App.Attestation.Auditor'))
         with self.assertRaises(Exception):
             self.prepare.load_inventory()
+
+    def test_pinned_app_has_only_its_signer_and_only_its_features(self):
+        # The inventory takes the pinned signer only for the pinned name, and ours not for it.
+        self.prepare.REPO = str(self.work / 'repo')
+        shutil.copytree(REPO / 'apps/packages', self.work / 'repo/apps/packages')
+        pinned = self.work / 'repo/apps/packages/com.fps.camera/common-props.toml'
+        original = pinned.read_text()
+        tcl = '0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470'
+        ours = '285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61'
+        for text in (original.replace(tcl, ours), original.replace('"' + tcl + '"', '"' + tcl + '", "' + ours + '"')):
+            pinned.write_text(text)
+            with self.assertRaises(Exception, msg=text):
+                self.prepare.load_inventory()
+        pinned.write_text(original)
+        other = self.work / 'repo/apps/packages/de.diamaneos.camera.processor/common-props.toml'
+        other.write_text(other.read_text().replace(ours, tcl))
+        with self.assertRaises(Exception):
+            self.prepare.load_inventory()
+        # Each version of the pinned app lists exactly its features.
+        self.prepare.REPO = str(REPO)
+        version = {'apks': ['base.apk'], 'label': 'Camera'}
+        for features in (None, [], ['FP6'], ['de.diamaneos.fairphone_camera', 'android.hardware.camera'], 'de.diamaneos.fairphone_camera'):
+            packages = self.ours()
+            packages['com.fps.camera']['variants'] = {'801000114': dict(version, **({} if features is None else {'features': features}))}
+            self.write(packages)
+            with self.assertRaises(SystemExit, msg=str(features)):
+                self.prepare.check(str(self.work), str(self.key))
+        packages = self.ours()
+        packages['com.fps.camera']['variants'] = {'801000114': dict(version, features=['de.diamaneos.fairphone_camera'])}
+        self.write(packages)
+        self.prepare.check(str(self.work), str(self.key))
 
     def test_check_refuses_other_packages_and_signers(self):
         for change in ('other', 'signer', 'source', 'renamed', 'split'):

@@ -408,6 +408,9 @@ class MirrorTests(unittest.TestCase):
         module = importlib.util.module_from_spec(prepare)
         prepare.loader.exec_module(module)
         self.assertEqual(kotlin_set('DIAMANEOS_SIGNERS'), module.SIGNERS)
+        pinned = re.search(r'val PINNED_PACKAGES = mapOf\(([^)]*)\)', text)
+        self.assertEqual(dict(re.findall(r'"([^"]+)" to "([^"]+)"', pinned[1])),
+                         {name: signer for name, (signer, _) in module.PINNED.items()})
         self.assertEqual(module.EXCLUDED, self.mirror.EXCLUDED)
         floor = re.search(r'DiamaneOS\(BuildConfig\.REPO_PUBLIC_KEY, [^)]*, ([0-9_]+)L\)', text)
         self.assertEqual(int(floor[1].replace('_', '')), module.MIN_TIME)

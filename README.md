@@ -5,6 +5,8 @@ apps.diamaneos.de serves two signed catalogs. The App Store checks each with its
 - Our catalog (`metadata.1.0.sjson`), made with GrapheneOS's generator and signed with our offline catalog key. It lists only packages signed with our App Store, Camera or Auditor key (source `DiamaneOS`): the App Store, Camera, CameraProcessor and Auditor.
 - GrapheneOS's catalog (`grapheneos/metadata.1.0.sjson`), served unchanged with its APKs. The App Store checks it with GrapheneOS's catalog key and takes only GrapheneOS's packages from it, without our packages, GrapheneOS's Info app (its release news) and GrapheneOS's Auditor.
 
+Our catalog also offers other makers' apps that need a DiamaneOS device's own parts, each pinned by name to its one signer in `prepare.py` (`PINNED`) and in the App Store's `Catalogs.kt` (`PINNED_PACKAGES`). Every version of such an app lists the system features it needs in its `props.toml`, and the App Store offers a version only on an OS build that declares them all. The only one is Fairphone's own camera app (`com.fps.camera`, signed by TCL). Its versions list `features = ["de.diamaneos.fairphone_camera"]`, which only FP6 builds with its camera algorithm service declare.
+
 ## Building our catalog
 
 The scripts need signify, apksigner and aapt2 from build tools 37 (generate.py reads apksigner's newer output), zopfli, brotli and GNU parallel.
