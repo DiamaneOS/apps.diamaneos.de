@@ -5,6 +5,7 @@
 - `generate.py` also reads a label written in the manifest (aapt2 prints it only in its `application:` line), as the App Store needs a label in each version.
 - `generate.py` keeps no cache files for the signer and aapt2's output, so every run checks each APK's signer against the inventory.
 - `generate.py` makes no deltas unless `DIAMANEOS_DELTAS=1`, which needs the `ina` tool.
+- `generate.py` makes no delta from a version that cannot apply one (`NO_DELTA_SOURCES`): App Store 3701.
 - `apps/packages` holds only our own packages. GrapheneOS's packages and their inherited version files were removed: they come from GrapheneOS's catalog.
 - Packages keep their own signing identities. Catalog authentication does not replace APK signature checks.
 - Our inventory turns off legacy fs-verity sidecars. Android 17 uses APK Signature Scheme v4 sidecars when supplied, alongside the APK's own signature and the catalog's hashes.

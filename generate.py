@@ -120,6 +120,8 @@ def main():
 SINGLE_THREAD = os.getenv("SINGLE_THREAD", "0") == "1"
 # DiamaneOS: deltas need the ina tool, so they are off unless asked for.
 DELTAS = os.getenv("DIAMANEOS_DELTAS") == "1"
+# DiamaneOS: installed versions that cannot apply deltas, so no delta is made from them. App Store 3701 reads none.
+NO_DELTA_SOURCES = {"app.grapheneos.apps": {3701}}
 
 def maybe_parallel(executor, fn, *args):
     if SINGLE_THREAD:
@@ -514,7 +516,8 @@ def process_deltas(pkg_container_path, pkg_name, dst_versions, package_variants)
     for idx, version in enumerate(versions):
         if version["versionCode"] in dst_versions:
             # generate deltas for at most 2 previous versions
-            src_versions = [v for v in versions[idx + 1:] if is_compatible(version, v)][:2]
+            src_versions = [v for v in versions[idx + 1:] if is_compatible(version, v)
+                            and v["versionCode"] not in NO_DELTA_SOURCES.get(pkg_name, ())][:2]
             if src_versions:
                 dsts.append(version)
                 srcs.append(src_versions)
