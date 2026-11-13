@@ -4,6 +4,8 @@
 # The first is for the FP6's camera algorithm service. The second names the version's APK by the first 16 hex
 # characters of its SHA-256, and only an OS built from the stock release that ships this APK declares it.
 signatures = ["228b9b34992235ff4efa72f771f79a48ca8db679920fcfd8ae8fe3e25a7a4852"]
+# The APK calls itself "Camera", as our own Camera does. This is the name the App Store shows for every version.
+label = "Fairphone Camera"
 source = "DiamaneOS"
 hasFsVeritySignatures = false
 

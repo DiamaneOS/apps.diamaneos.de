@@ -525,6 +525,15 @@ def process_deltas(pkg_container_path, pkg_name, dst_versions, package_variants)
     with ThreadPoolExecutor() as executor:
         maybe_parallel(executor, partial(handle_deltas_group, pkg_container_path, pkg_name), dsts, srcs)
 
+# DiamaneOS: a label in common-props.toml replaces the APK's own label in every version, and is no field of the
+# package itself. prepare.py takes it only for a pinned maker's app, whose APK may name itself too plainly:
+# the Fairphone Camera's APK calls itself "Camera".
+def replace_label(common_props, package_variants):
+    label = common_props.pop("label", None)
+    if label is not None:
+        for props in package_variants.values():
+            props["label"] = label
+
 def process_pkg(packages_dir, pkg_name):
     pkg_container_path = path.join(packages_dir, pkg_name)
     common_props = load_props(pkg_container_path, "common-props")
@@ -547,6 +556,7 @@ def process_pkg(packages_dir, pkg_name):
                 ver, props = res
                 package_variants[ver] = props
 
+    replace_label(common_props, package_variants)
     pruned_package_variants = remove_old_pkg_variants(package_variants)
     if DELTAS:
         process_deltas(pkg_container_path, pkg_name, {int(v) for v in pruned_package_variants.keys()}, package_variants)

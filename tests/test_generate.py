@@ -33,6 +33,17 @@ class DeltaSourceTests(unittest.TestCase):
         self.groups.clear()
         self.assertEqual(self.deltas('app.grapheneos.apps', [3701, 3703], [3703]), [])
 
+    def test_a_label_in_the_common_props_replaces_each_version_s_label(self):
+        common = {'signatures': ['x'], 'label': 'Fairphone Camera'}
+        variants = {'801000114': {'label': 'Camera', 'versionName': 'a'}, '801000115': {'label': 'Camera'}}
+        self.generate.replace_label(common, variants)
+        self.assertEqual(common, {'signatures': ['x']})
+        self.assertEqual(variants, {'801000114': {'label': 'Fairphone Camera', 'versionName': 'a'}, '801000115': {'label': 'Fairphone Camera'}})
+        # Without one, each version keeps the label of its APK.
+        common, variants = {'signatures': ['x']}, {'9311': {'label': 'Camera'}}
+        self.generate.replace_label(common, variants)
+        self.assertEqual((common, variants), ({'signatures': ['x']}, {'9311': {'label': 'Camera'}}))
+
     def test_other_packages_keep_their_two_sources(self):
         self.assertEqual(self.deltas('app.grapheneos.camera', [3701, 9309, 9310], [9310]), [(9310, [9309, 3701])])
 

@@ -217,7 +217,7 @@ class PrepareTests(unittest.TestCase):
             self.prepare.load_inventory()
         # Each version of the pinned app lists exactly its features and the one that names its APK.
         self.prepare.REPO = str(REPO)
-        version = {'apks': ['base.apk'], 'label': 'Camera'}
+        version = {'apks': ['base.apk'], 'label': 'Fairphone Camera'}
         generic, prefix = 'de.diamaneos.fairphone_camera', 'de.diamaneos.fairphone_camera.apk_'
         apks = {'801000114': b'the APK of one stock release', '801000115': b'the APK of the next stock release'}
         named = {}
@@ -272,6 +272,58 @@ class PrepareTests(unittest.TestCase):
             else:
                 with self.assertRaises(SystemExit, msg=str(hashes)):
                     self.prepare.check(str(self.work), str(self.key))
+
+    def test_label_is_replaced_for_a_pinned_app_only(self):
+        self.assertEqual(self.prepare.load_inventory()['com.fps.camera']['label'], 'Fairphone Camera')
+        self.assertEqual([n for n, p in self.prepare.load_inventory().items() if 'label' in p], ['com.fps.camera'])
+        self.prepare.REPO = str(self.work / 'repo')
+        shutil.copytree(REPO / 'apps/packages', self.work / 'repo/apps/packages')
+        # One of our own apps may not replace its APK's label.
+        for name in ('app.grapheneos.camera', 'de.diamaneos.camera.processor', 'app.grapheneos.apps'):
+            props = self.work / 'repo/apps/packages' / name / 'common-props.toml'
+            original = props.read_text()
+            props.write_text(original.replace('source = "DiamaneOS"', 'source = "DiamaneOS"\nlabel = "Another name"'))
+            with self.assertRaises(Exception, msg=name):
+                self.prepare.load_inventory()
+            props.write_text(original)
+        # The pinned app's label is a non-empty string, or absent.
+        pinned = self.work / 'repo/apps/packages/com.fps.camera/common-props.toml'
+        original = pinned.read_text()
+        for value in ('""', '"  "', '7', '["Fairphone Camera"]', 'true'):
+            pinned.write_text(original.replace('label = "Fairphone Camera"', 'label = ' + value))
+            with self.assertRaises(Exception, msg=value):
+                self.prepare.load_inventory()
+        pinned.write_text(original.replace('label = "Fairphone Camera"\n', ''))
+        self.assertNotIn('label', self.prepare.load_inventory()['com.fps.camera'])
+        # The signed catalog carries that label in every version of the app, and nowhere else.
+        self.prepare.REPO = str(REPO)
+        generic, prefix = 'de.diamaneos.fairphone_camera', 'de.diamaneos.fairphone_camera.apk_'
+        folder = self.work / 'apps/packages/com.fps.camera'
+        versions = {}
+        for code in ('801000114', '801000115'):
+            (folder / code).mkdir(parents=True)
+            (folder / code / 'base.apk').write_bytes(code.encode())
+            versions[code] = {'apks': ['base.apk'], 'label': 'Fairphone Camera',
+                              'features': [generic, prefix + hashlib.sha256(code.encode()).hexdigest()[:16]]}
+        packages = self.ours()
+        packages['com.fps.camera']['variants'] = versions
+        self.write(packages)
+        self.prepare.check(str(self.work), str(self.key))
+        for label in ('Camera', 'fairphone camera', 'Fairphone Camera '):
+            packages['com.fps.camera']['variants'] = dict(versions, **{'801000115': dict(versions['801000115'], label=label)})
+            self.write(packages)
+            with self.assertRaises(SystemExit, msg=label):
+                self.prepare.check(str(self.work), str(self.key))
+        packages['com.fps.camera']['variants'] = versions
+        packages['com.fps.camera']['label'] = 'Fairphone Camera'
+        self.write(packages)
+        with self.assertRaises(SystemExit):
+            self.prepare.check(str(self.work), str(self.key))
+        del packages['com.fps.camera']['label']
+        packages['app.grapheneos.camera']['label'] = 'Camera'
+        self.write(packages)
+        with self.assertRaises(SystemExit):
+            self.prepare.check(str(self.work), str(self.key))
 
     def test_check_refuses_other_packages_and_signers(self):
         for change in ('other', 'signer', 'source', 'renamed', 'split'):

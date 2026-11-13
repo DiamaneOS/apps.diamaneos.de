@@ -78,6 +78,12 @@ def load_inventory():
                  if name not in PINNED and (len(p.get("signatures", [])) != 1 or p["signatures"][0] not in SIGNERS)]
     problems += [name + " needs one signer of its pinned lineage" for name, p in inventory.items()
                  if name in PINNED and (len(p.get("signatures", [])) != 1 or p["signatures"][0] not in PINNED[name][0])]
+    # A label here replaces the APK's own label in every version (replace_label in generate.py). Only a pinned
+    # maker's app may have one. Our own apps show the name their APK carries.
+    problems += [name + " may not replace its APK's label" for name, p in inventory.items()
+                 if "label" in p and name not in PINNED]
+    problems += [name + " needs a label that is a non-empty string" for name, p in inventory.items()
+                 if "label" in p and name in PINNED and (not isinstance(p["label"], str) or not p["label"].strip())]
     problems += [name + " uses the original-package system" for name, p in inventory.items() if "originalPackage" in p]
     if problems:
         raise Exception("not our catalog's packages: " + ", ".join(problems))
@@ -189,6 +195,10 @@ def check(work, key):
                                or any(not isinstance(v, dict) or "deps" in v or "deps2" in v
                                       for v in package.get("variants", {}).values())):
             problems.append(name + ": not linked as LINKED says")
+        # The inventory's label, when it has one, is the label of every version, and no field of the package.
+        if "label" in package or (listed is not None and "label" in listed and any(
+                not isinstance(v, dict) or v.get("label") != listed["label"] for v in package.get("variants", {}).values())):
+            problems.append(name + ": a label that is not the inventory's, in every version and only there")
         # The App Store reads each version's label and refuses the whole catalog without one (RPackage in Repo.kt).
         if any(not isinstance(v, dict) or not isinstance(v.get("label"), str) or not v["label"].strip()
                for v in package.get("variants", {}).values()):
