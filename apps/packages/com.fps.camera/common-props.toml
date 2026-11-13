@@ -8,5 +8,6 @@ source = "DiamaneOS"
 hasFsVeritySignatures = false
 
 description = """
-Fairphone Camera is Fairphone's own camera app, with its photo, portrait, night and video modes. On DiamaneOS it runs without network access.
+Fairphone Camera is Fairphone's own camera app, with its photo, portrait, night and video modes. On DiamaneOS it runs without network access.<br>
+Not working on DiamaneOS: front portrait and low-light video. Time-lapse saves to a folder you allow with Storage Scopes.
 """
