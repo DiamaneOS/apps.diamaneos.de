@@ -1,6 +1,8 @@
 # Fairphone's own camera app, signed by TCL. This is the certificate that signs the APK, the second of TCL's
-# signer lineage (PINNED in prepare.py and PINNED_PACKAGES in the App Store's Catalogs.kt). Every version lists features = ["de.diamaneos.fairphone_camera"] in its
-# props.toml: it needs the FP6's camera algorithm service, and only OS builds with it declare that feature.
+# signer lineage (PINNED in prepare.py and PINNED_PACKAGES in the App Store's Catalogs.kt). Every version lists two features in its props.toml, for example
+# features = ["de.diamaneos.fairphone_camera", "de.diamaneos.fairphone_camera.apk_3b271af8fac2df22"].
+# The first is for the FP6's camera algorithm service. The second names the version's APK by the first 16 hex
+# characters of its SHA-256, and only an OS built from the stock release that ships this APK declares it.
 signatures = ["228b9b34992235ff4efa72f771f79a48ca8db679920fcfd8ae8fe3e25a7a4852"]
 source = "DiamaneOS"
 hasFsVeritySignatures = false

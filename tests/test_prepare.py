@@ -1,5 +1,6 @@
 """prepare.py: our catalog's work tree holds only our packages, and --check refuses anything else."""
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -214,19 +215,63 @@ class PrepareTests(unittest.TestCase):
         other.write_text(other.read_text().replace(ours, tcl))
         with self.assertRaises(Exception):
             self.prepare.load_inventory()
-        # Each version of the pinned app lists exactly its features.
+        # Each version of the pinned app lists exactly its features and the one that names its APK.
         self.prepare.REPO = str(REPO)
         version = {'apks': ['base.apk'], 'label': 'Camera'}
-        for features in (None, [], ['FP6'], ['de.diamaneos.fairphone_camera', 'android.hardware.camera'], 'de.diamaneos.fairphone_camera'):
+        generic, prefix = 'de.diamaneos.fairphone_camera', 'de.diamaneos.fairphone_camera.apk_'
+        apks = {'801000114': b'the APK of one stock release', '801000115': b'the APK of the next stock release'}
+        named = {}
+        for code, data in apks.items():
+            folder = self.work / 'apps/packages/com.fps.camera' / code
+            folder.mkdir(parents=True)
+            (folder / 'base.apk').write_bytes(data)
+            named[code] = prefix + hashlib.sha256(data).hexdigest()[:16]
+        apk = named['801000114']
+        self.assertEqual(len(apk), len(prefix) + 16)
+        for features in (None, [], ['FP6'], [generic, 'android.hardware.camera'], generic,
+                         # Without the APK's name, only it, another APK's name, both names, its name twice.
+                         [generic], [apk], [generic, named['801000115']], [generic, apk, named['801000115']], [generic, apk, apk],
+                         # A third feature, the whole hash, fewer characters, upper case, a stock release, no string.
+                         [generic, apk, 'android.hardware.camera'], [generic, prefix + hashlib.sha256(apks['801000114']).hexdigest()],
+                         [generic, apk[:-1]], [generic, prefix + apk[len(prefix):].upper()],
+                         [generic, 'de.diamaneos.fairphone_camera.stock_16_115_0'], [generic, 16]):
             packages = self.ours()
             packages['com.fps.camera']['variants'] = {'801000114': dict(version, **({} if features is None else {'features': features}))}
             self.write(packages)
             with self.assertRaises(SystemExit, msg=str(features)):
                 self.prepare.check(str(self.work), str(self.key))
+        for features in ([generic, apk], [apk, generic]):
+            packages = self.ours()
+            packages['com.fps.camera']['variants'] = {'801000114': dict(version, features=features)}
+            self.write(packages)
+            self.prepare.check(str(self.work), str(self.key))
+        # Every version is checked against its own APK, and two versions stay side by side.
         packages = self.ours()
-        packages['com.fps.camera']['variants'] = {'801000114': dict(version, features=['de.diamaneos.fairphone_camera'])}
+        packages['com.fps.camera']['variants'] = {'801000114': dict(version, features=[generic, apk]),
+                                                  '801000115': dict(version, features=[generic, apk])}
+        self.write(packages)
+        with self.assertRaises(SystemExit):
+            self.prepare.check(str(self.work), str(self.key))
+        packages['com.fps.camera']['variants']['801000115'] = dict(version, features=[generic, named['801000115']])
         self.write(packages)
         self.prepare.check(str(self.work), str(self.key))
+        # The check hashes the APK in the tree itself: another file under the same name, or none, is refused.
+        (self.work / 'apps/packages/com.fps.camera/801000115/base.apk').write_bytes(b'another file')
+        with self.assertRaises(SystemExit):
+            self.prepare.check(str(self.work), str(self.key))
+        (self.work / 'apps/packages/com.fps.camera/801000115/base.apk').unlink()
+        with self.assertRaises(SystemExit):
+            self.prepare.check(str(self.work), str(self.key))
+        # The catalog's own hash of the version must be that APK's.
+        del packages['com.fps.camera']['variants']['801000115']
+        for hashes, accepted in (([hashlib.sha256(apks['801000114']).hexdigest()], True), (['0' * 64], False), ([], False)):
+            packages['com.fps.camera']['variants']['801000114'] = dict(version, features=[generic, apk], apkHashes=hashes)
+            self.write(packages)
+            if accepted:
+                self.prepare.check(str(self.work), str(self.key))
+            else:
+                with self.assertRaises(SystemExit, msg=str(hashes)):
+                    self.prepare.check(str(self.work), str(self.key))
 
     def test_check_refuses_other_packages_and_signers(self):
         for change in ('other', 'signer', 'source', 'renamed', 'split'):

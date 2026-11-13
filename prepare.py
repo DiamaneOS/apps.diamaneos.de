@@ -12,6 +12,7 @@ packages from it. From our catalog it refuses any package not signed with our ke
 GrapheneOS's catalog lists (Catalogs.kt).
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -41,10 +42,14 @@ SIGNERS = {
 # com.fps.camera: Fairphone's own camera app, signed by TCL, whose key was rotated once. Its APK is signed with
 # the second certificate. It needs the camera algorithm service that FP6 builds declare with
 # de.diamaneos.fairphone_camera.
+# The last value is the prefix of one further feature each version must list. It names the version's APK: the
+# prefix and the first 16 hex characters of the APK's SHA-256. The app loads stock libraries of the OS build,
+# so an OS build declares that feature only for the APK of the stock release it was built from, and a phone is
+# offered that APK and no other. APK 3b271af8fac2df22... is de.diamaneos.fairphone_camera.apk_3b271af8fac2df22.
 PINNED = {
     "com.fps.camera": (["0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470",
                         "228b9b34992235ff4efa72f771f79a48ca8db679920fcfd8ae8fe3e25a7a4852"],
-                       ["de.diamaneos.fairphone_camera"]),
+                       ["de.diamaneos.fairphone_camera"], "de.diamaneos.fairphone_camera.apk_"),
 }
 # Packages the App Store updates together. Each lists its group (one release channel for all of it) and the
 # dependencies it names without a version, so an update of it also takes a newer dependency in the same install.
@@ -77,6 +82,26 @@ def load_inventory():
     if problems:
         raise Exception("not our catalog's packages: " + ", ".join(problems))
     return inventory
+
+
+def pinned_version_problem(work, name, version, variant):
+    """A pinned app's version lists the app's features and the one feature that names its APK in the tree,
+    and nothing else. The APK's SHA-256 is computed here."""
+    _, features, prefix = PINNED[name]
+    apk = os.path.join(work, "apps/packages", name, version, "base.apk")
+    if not os.path.isfile(apk):
+        return name + " " + version + ": no APK in the tree"
+    digest = hashlib.sha256()
+    with open(apk, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            digest.update(block)
+    wanted = features + [prefix + digest.hexdigest()[:16]]
+    listed = variant.get("features") if isinstance(variant, dict) else None
+    if not isinstance(listed, list) or not all(isinstance(f, str) for f in listed) or sorted(listed) != sorted(wanted):
+        return name + " " + version + ": not limited to " + ", ".join(wanted)
+    if "apkHashes" in variant and variant["apkHashes"] != [digest.hexdigest()]:
+        return name + " " + version + ": the catalog lists another APK than the tree holds"
+    return None
 
 
 def prepare(work):
@@ -154,10 +179,10 @@ def check(work, key):
         # The App Store parses each APK from our catalog for its signer, and a split does not parse.
         elif any(v.get("apks") != ["base.apk"] for v in package.get("variants", {}).values()):
             problems.append(name + ": not a single APK")
-        # A pinned maker's app is offered only on OS builds with its features.
-        if name in PINNED and any(not isinstance(v, dict) or v.get("features") != PINNED[name][1]
-                                  for v in package.get("variants", {}).values()):
-            problems.append(name + ": a version not limited to " + ", ".join(PINNED[name][1]))
+        # A pinned maker's app is offered only on OS builds with its features, made for that version's APK.
+        if name in PINNED:
+            problems += filter(None, (pinned_version_problem(work, name, version, v)
+                                      for version, v in sorted(package.get("variants", {}).items())))
         # Linked packages keep their group and dependencies, and no version names others.
         if name in LINKED and (package.get("group") != LINKED[name][0] or package.get("deps") != LINKED[name][1]
                                or "deps2" in package
