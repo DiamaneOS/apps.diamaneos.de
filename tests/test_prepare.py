@@ -42,7 +42,7 @@ class PrepareTests(unittest.TestCase):
             'app.grapheneos.camera': ['285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61'],
             'de.diamaneos.camera.processor': ['285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61'],
             'de.diamaneos.auditor': ['427bfd360586b829475f37abffd2548d93db3618e45c994de416469ef04bc2ec'],
-            'com.fps.camera': ['0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470']})
+            'com.fps.camera': ['228b9b34992235ff4efa72f771f79a48ca8db679920fcfd8ae8fe3e25a7a4852']})
 
     def test_prepare_drops_other_packages_and_keeps_versions(self):
         (self.work / 'apps/packages/app.vanadium.browser/1').mkdir(parents=True)
@@ -189,17 +189,26 @@ class PrepareTests(unittest.TestCase):
             self.prepare.load_inventory()
 
     def test_pinned_app_has_only_its_signer_and_only_its_features(self):
-        # The inventory takes the pinned signer only for the pinned name, and ours not for it.
+        # The inventory takes one signer of the pinned lineage only for the pinned name, and ours not for it.
         self.prepare.REPO = str(self.work / 'repo')
         shutil.copytree(REPO / 'apps/packages', self.work / 'repo/apps/packages')
         pinned = self.work / 'repo/apps/packages/com.fps.camera/common-props.toml'
         original = pinned.read_text()
-        tcl = '0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470'
+        first, tcl = self.prepare.PINNED['com.fps.camera'][0]
+        self.assertEqual((first, tcl), ('0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470',
+                                        '228b9b34992235ff4efa72f771f79a48ca8db679920fcfd8ae8fe3e25a7a4852'))
+        self.assertIn('"' + tcl + '"', original)
         ours = '285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61'
-        for text in (original.replace(tcl, ours), original.replace('"' + tcl + '"', '"' + tcl + '", "' + ours + '"')):
+        # One of ours, another beside it, both of the lineage, none, another spelling.
+        for text in (original.replace(tcl, ours), original.replace('"' + tcl + '"', '"' + tcl + '", "' + ours + '"'),
+                     original.replace('"' + tcl + '"', '"' + first + '", "' + tcl + '"'),
+                     original.replace('signatures = [', 'signatures = [] #'), original.replace(tcl, tcl.upper())):
             pinned.write_text(text)
             with self.assertRaises(Exception, msg=text):
                 self.prepare.load_inventory()
+        # The older certificate alone is of the lineage too, for an APK it signs.
+        pinned.write_text(original.replace(tcl, first))
+        self.prepare.load_inventory()
         pinned.write_text(original)
         other = self.work / 'repo/apps/packages/de.diamaneos.camera.processor/common-props.toml'
         other.write_text(other.read_text().replace(ours, tcl))

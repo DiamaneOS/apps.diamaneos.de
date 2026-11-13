@@ -34,12 +34,17 @@ SIGNERS = {
     "285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61",
     "427bfd360586b829475f37abffd2548d93db3618e45c994de416469ef04bc2ec",
 }
-# Other makers' apps our catalog offers (PINNED_PACKAGES in Catalogs.kt): each name with its one signer, and
-# the system features every version of it must list (the App Store offers a version only on an OS build that
-# declares them). com.fps.camera: Fairphone's own camera app, signed by TCL. It needs the camera algorithm
-# service that FP6 builds declare with de.diamaneos.fairphone_camera.
+# Other makers' apps our catalog offers (PINNED_PACKAGES in Catalogs.kt): each name with its signer lineage, the
+# SHA-256 of each certificate the maker's key has had, oldest first, and the system features every version of
+# it must list (the App Store offers a version only on an OS build that declares them). The inventory lists
+# the one certificate that signs the APK, as apksigner verify prints it, and it must be one of the lineage.
+# com.fps.camera: Fairphone's own camera app, signed by TCL, whose key was rotated once. Its APK is signed with
+# the second certificate. It needs the camera algorithm service that FP6 builds declare with
+# de.diamaneos.fairphone_camera.
 PINNED = {
-    "com.fps.camera": ("0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470", ["de.diamaneos.fairphone_camera"]),
+    "com.fps.camera": (["0f00b338d27aa1cd1c4a00e8584501ffb36775a07af42e1cc394ca1ed0908470",
+                        "228b9b34992235ff4efa72f771f79a48ca8db679920fcfd8ae8fe3e25a7a4852"],
+                       ["de.diamaneos.fairphone_camera"]),
 }
 # Packages the App Store updates together. Each lists its group (one release channel for all of it) and the
 # dependencies it names without a version, so an update of it also takes a newer dependency in the same install.
@@ -66,8 +71,8 @@ def load_inventory():
     problems += [name + " is not source DiamaneOS" for name, p in inventory.items() if p.get("source") != "DiamaneOS"]
     problems += [name + " needs one of our signers" for name, p in inventory.items()
                  if name not in PINNED and (len(p.get("signatures", [])) != 1 or p["signatures"][0] not in SIGNERS)]
-    problems += [name + " needs its pinned signer" for name, p in inventory.items()
-                 if name in PINNED and p.get("signatures") != [PINNED[name][0]]]
+    problems += [name + " needs one signer of its pinned lineage" for name, p in inventory.items()
+                 if name in PINNED and (len(p.get("signatures", [])) != 1 or p["signatures"][0] not in PINNED[name][0])]
     problems += [name + " uses the original-package system" for name, p in inventory.items() if "originalPackage" in p]
     if problems:
         raise Exception("not our catalog's packages: " + ", ".join(problems))
