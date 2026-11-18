@@ -193,6 +193,38 @@ class ChecksTests(unittest.TestCase):
                     self.process()
                 (self.version / 'props.toml').unlink(missing_ok=True)
 
+    def test_aapt2_output_it_cannot_read_stops_the_run(self):
+        # aapt2 of build tools 36 prints a quote inside a label as it is, and a backslash as two.
+        for line in ("application-label:'It's'", "application-label:'A \\\\ B' \\", "minSdkVersion:'Baklava'",
+                     "minSdkVersion:'\u0663\u0667'"):
+            with self.subTest(line=line):
+                self.lines = ["minSdkVersion:'37'", "application-label:'Auditor'", line]
+                with self.assertRaisesRegex(Exception, 'aapt2'):
+                    self.process()
+        for first in (f"package: versionCode='37' versionName='37'", f"package: name='{PKG}' versionName='37'",
+                      f"package: name='{PKG}' versionCode='37' versionCode='37'", f"package: name='{PKG}' versionCode='x'",
+                      f"package: name='{PKG}' name='{PKG}' versionCode='37'", "package: name='It's' versionCode='37'"):
+            with self.subTest(first=first):
+                self.first = first
+                with self.assertRaisesRegex(Exception, "is not its directory's|aapt2"):
+                    self.process()
+
+    def test_values_with_colons_and_equals_signs_stay_whole(self):
+        self.first = f"package: name='{PKG}' versionCode='37' versionName='37 = a:b'"
+        self.lines = ["minSdkVersion:'37'", '', "application-label:'Auditor: Pro'", '']
+        _, listed = self.process()
+        self.assertEqual((listed['label'], listed['versionName']), ('Auditor: Pro', '37 = a:b'))
+
+    def test_a_version_without_a_label_stops_the_run(self):
+        for lines in (["minSdkVersion:'37'"], ["minSdkVersion:'37'", "application-label:''"],
+                      ["minSdkVersion:'37'", "application: label='' icon=''"]):
+            with self.subTest(lines=lines):
+                self.lines = lines
+                with self.assertRaisesRegex(Exception, 'no label'):
+                    self.process()
+        self.lines = ["minSdkVersion:'37'", "application: label='Auditor' icon=''"]
+        self.assertEqual(self.process()[1]['label'], 'Auditor')
+
     def test_compressed_file_from_another_apk(self):
         os.utime(self.version / 'base.apk.br', ns=(0, 0))
         with self.assertRaisesRegex(Exception, 'not made from this APK'):

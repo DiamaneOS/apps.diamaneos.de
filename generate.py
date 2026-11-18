@@ -286,6 +286,33 @@ def write_text(text, dst_path):
         os.fsync(f.fileno())
     os.rename(tmp_path, dst_path)
 
+# DiamaneOS: aapt2 output that shlex cannot read stops the run. aapt2 leaves a quote inside a value as it is,
+# so a label such as "It's" cannot be read.
+def badging_items(line, apk_path):
+    try:
+        return shlex.split(line)
+    except ValueError:
+        raise Exception(apk_path + ": aapt2 output that does not parse: " + line)
+
+def badging_number(text, apk_path):
+    require(re.fullmatch(r"[0-9]+", text) is not None, apk_path + ": " + repr(text) + " from aapt2 is not a number")
+    return int(text)
+
+# DiamaneOS: the package line names the package and its versionCode once each. Values may hold "=".
+def check_package_line(line, pkg_name, version_code, apk_path):
+    names, codes, version_name = [], [], None
+    for kv in badging_items(line, apk_path):
+        key, _, value = kv.partition("=")
+        if key == "name":
+            names.append(value)
+        elif key == "versionCode":
+            codes.append(badging_number(value, apk_path))
+        elif key == "versionName":
+            version_name = value
+    require(names == [pkg_name], apk_path + ": package name is not its directory's")
+    require(codes == [version_code], apk_path + ": versionCode is not its directory's")
+    return version_name
+
 def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
     pkg_path = path.join(base_path, pkg_version)
     if not path.isdir(pkg_path):
@@ -311,27 +338,25 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
 
     lines = badging.split("\n")
 
-    for kv in shlex.split(lines[0]):
-        if kv.startswith("versionName"):
-            pkg_props["versionName"] = kv.split("=")[1]
-        elif kv.startswith("versionCode"):
-            require(pkg_props["versionCode"] == int(kv.split("=")[1]), base_apk_path + ": versionCode is not its directory's")
-        elif kv.startswith("name"):
-            require(pkg_name == kv.split("=")[1], base_apk_path + ": package name is not its directory's")
+    version_name = check_package_line(lines[0], pkg_name, pkg_props["versionCode"], base_apk_path)
+    if version_name is not None:
+        pkg_props["versionName"] = version_name
 
     pkg_abis = set()
 
     for line in lines[1:-1]:
-        kv = shlex.split(line)
+        kv = badging_items(line, base_apk_path)
+        if not kv:
+            continue
         if kv[0].startswith("application-label:"):
-            pkg_props["label"] = kv[0].split(":")[1]
+            pkg_props["label"] = kv[0].partition(":")[2]
         elif kv[0] == "application:" and "label" not in pkg_props:
             # DiamaneOS: a label written in the manifest, not a resource, has no application-label line.
             for item in kv[1:]:
                 if item.startswith("label=") and item != "label=":
                     pkg_props["label"] = item[len("label="):]
         elif kv[0].startswith("minSdkVersion"):
-            pkg_props["minSdk"] = int(kv[0].split(":")[1])
+            pkg_props["minSdk"] = badging_number(kv[0].partition(":")[2], base_apk_path)
         elif kv[0].startswith("native-code"):
             abis = kv[1:]
             for abi in abis:
@@ -345,6 +370,8 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
                 pkg_abis.add(abi)
 
     require(pkg_props.get("minSdk") != None, pkg_path + ": no minSdkVersion")
+    # DiamaneOS: the App Store refuses the whole catalog when a version has no label (RPackage in Repo.kt).
+    require(pkg_props.get("label", "").strip() != "", base_apk_path + ": no label")
 
     for key,value in load_version_props(pkg_path, "channel").items():
         pkg_props[key] = value
@@ -388,15 +415,8 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
 
         badging = load_aapt2_badging(apk_path)
         lines = badging.split("\n")
-        apk_version_code = None
-        for kv in shlex.split(lines[0]):
-            if kv.startswith("versionCode"):
-                require(apk_version_code == None, apk_path + ": versionCode listed twice")
-                apk_version_code = int(kv.split("=")[1])
-            elif kv.startswith("name"):
-                require(pkg_name == kv.split("=")[1], apk_path + ": package name is not its directory's")
         # all apk splits must have the same version code
-        require(pkg_props["versionCode"] == apk_version_code, apk_path + ": versionCode is not the base APK's")
+        check_package_line(lines[0], pkg_name, pkg_props["versionCode"], apk_path)
         if file_sha256(apk_path) != apk_hash:
             raise Exception(apk_path + " changed while it was checked")
 
