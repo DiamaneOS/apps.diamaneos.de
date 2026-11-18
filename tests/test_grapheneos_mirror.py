@@ -589,6 +589,27 @@ class MirrorTests(unittest.TestCase):
         self.run_mirror()
         self.assertIn('packages/app.vanadium.browser/icon.webp', self.files())
 
+    def test_apk_sizes_must_be_whole_numbers(self):
+        for column, value in (('apkGzSizes', '20'), ('apkGzSizes', 1.5), ('apkGzSizes', True), ('apkSizes', -1),
+                              ('apkBrSizes', 0), ('apkBrSizes', None), ('apkSizes', [3])):
+            with self.subTest(column=column, value=value):
+                upstream = Upstream()
+                upstream.apk('app.vanadium.config', 1, b'config', v4=False)
+                upstream.packages['app.vanadium.config']['variants']['1'][column] = [value]
+                with self.assertRaisesRegex(self.mirror.Refused, 'unexpected APK entry'):
+                    self.mirror.needed_files({'time': upstream.time, 'packages': upstream.packages})
+
+    def test_damaged_gzip_refused(self):
+        self.upstream.apk('app.vanadium.config', 1, b'config ' * 100, v4=False)
+        self.upstream.catalog()
+        path = 'packages/app.vanadium.config/1/base.apk.gz'
+        gz = bytearray(self.upstream.files[path])
+        gz[12] ^= 0xff
+        self.upstream.files[path] = bytes(gz)
+        with self.assertRaisesRegex(self.mirror.Refused, 'does not match'):
+            self.run_mirror()
+        self.assertEqual(self.files(), [])
+
 
 if __name__ == '__main__':
     unittest.main()

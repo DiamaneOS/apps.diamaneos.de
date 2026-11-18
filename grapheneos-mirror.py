@@ -31,6 +31,7 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
+import zlib
 
 UPSTREAM = "https://apps.grapheneos.org"
 CATALOG = "metadata.1.0.sjson"
@@ -153,7 +154,8 @@ def needed_files(catalog):
             v4 = variant.get("hasV4Signatures", False)
             apk_deltas = deltas(name + "/" + code, variant, len(rows))
             for i, (apk, digest, size, gz_size, br_digest, br_size) in enumerate(rows):
-                if not APK.fullmatch(apk) or not all(map(SHA256.fullmatch, (digest, br_digest))):
+                if (not APK.fullmatch(apk) or not all(map(SHA256.fullmatch, (digest, br_digest)))
+                        or not all(type(n) is int and n > 0 for n in (size, gz_size, br_size))):
                     raise Refused(name + "/" + code + ": unexpected APK entry")
                 path = "packages/" + name + "/" + code + "/" + apk
                 files.append((path + ".gz", "apk", (digest, size, gz_size)))
@@ -218,12 +220,15 @@ def check_apk(path, expected):
     if os.path.getsize(path) != gz_size:
         raise Refused(path + ": compressed size differs from the catalog")
     h, total = hashlib.sha256(), 0
-    with gzip.open(path, "rb") as f:
-        while block := f.read(CHUNK):
-            total += len(block)
-            if total > size:
-                break
-            h.update(block)
+    try:
+        with gzip.open(path, "rb") as f:
+            while block := f.read(CHUNK):
+                total += len(block)
+                if total > size:
+                    break
+                h.update(block)
+    except (OSError, EOFError, zlib.error):
+        total = -1
     if total != size or h.hexdigest() != digest:
         raise Refused(path + ": does not match the signed catalog")
 
