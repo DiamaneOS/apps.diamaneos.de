@@ -21,6 +21,7 @@ GrapheneOS's catalog lists (Catalogs.kt).
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -72,6 +73,8 @@ EXCLUDED = {"app.grapheneos.info", "app.attestation.auditor"}
 MAX_ICON = 1024 * 1024
 # Release channels from least to most stable (ReleaseChannel in Repo.kt). A version without one is stable.
 CHANNELS = ["alpha", "beta", "stable"]
+# A version code as generate.py names it and the App Store reads it as a number (Repo.kt).
+VERSION = re.compile(r"[1-9][0-9]{0,18}")
 
 
 def load_inventory():
@@ -156,7 +159,29 @@ def signed_catalog(path, key):
             f.write(b"untrusted comment: signature from the DiamaneOS app catalog key\n" + data[-101:])
         if subprocess.run([SIGNIFY, "-V", "-q", "-p", key, "-m", message, "-x", signature]).returncode != 0:
             sys.exit(path + " does not verify with " + key)
-    return json.loads(data[:-102])
+    try:
+        return json.loads(data[:-102])
+    except (ValueError, RecursionError):
+        sys.exit(path + " is not JSON")
+
+
+def unreadable(catalog):
+    """Why the App Store could not read the catalog as the checks below read it, or None. It refuses the whole
+    catalog when a package has no signers or versions object, or a version no number or a channel it does not
+    know (Repo.kt)."""
+    if not isinstance(catalog, dict) or type(catalog.get("time")) is not int \
+            or not isinstance(catalog.get("packages"), dict):
+        return "not a catalog with a time and packages"
+    for name, package in catalog["packages"].items():
+        if not isinstance(package, dict) or not isinstance(package.get("variants"), dict):
+            return name + ": no versions object"
+        if not isinstance(package.get("signatures"), list) or not all(isinstance(s, str) for s in package["signatures"]):
+            return name + ": no list of signers"
+        for code, variant in package["variants"].items():
+            if not VERSION.fullmatch(code) or not isinstance(variant, dict) \
+                    or variant.get("channel", "stable") not in CHANNELS:
+                return name + " " + code + ": not a version the App Store reads"
+    return None
 
 
 def icon_problem(work, name, package):
@@ -225,6 +250,9 @@ def check(work, key, published, allowed=()):
     inventory = load_inventory()
     catalog = signed_catalog(os.path.join(work, CATALOG), key)
     last = None if published is None else signed_catalog(published, key)
+    for path, value in ((os.path.join(work, CATALOG), catalog), (published, last)):
+        if path is not None and (problem := unreadable(value)) is not None:
+            sys.exit(path + ": " + problem)
     packages = catalog["packages"]
     problems = []
     # Catches a signing machine with a wrong clock.

@@ -252,6 +252,57 @@ class PrepareTests(unittest.TestCase):
         for name in ('de.diamaneos.auditor', 'app.grapheneos.camera:beta', 'app.grapheneos.camera:old', 'app.vanadium.browser'):
             self.refused('--allow-drop ' + name + ': the catalog keeps it', self.PUBLISHED, allowed=[name])
 
+    def test_check_refuses_a_catalog_the_app_store_cannot_read(self):
+        version = {'apks': ['base.apk'], 'label': 'App Store'}
+        changes = {
+            'not an object': lambda c: c.clear(),
+            'no time': lambda c: c.pop('time'),
+            'time not a number': lambda c: c.update(time='1792700000'),
+            'packages not an object': lambda c: c.update(packages=list(c['packages'])),
+            'package not an object': lambda c: c['packages'].update({'app.grapheneos.apps': []}),
+            'no versions object': lambda c: c['packages']['app.grapheneos.apps'].pop('variants'),
+            'versions not an object': lambda c: c['packages']['app.grapheneos.apps'].update(variants=[version]),
+            'version not an object': lambda c: c['packages']['app.grapheneos.apps']['variants'].update({'3705': 1}),
+            'version code not a number': lambda c: c['packages']['app.grapheneos.apps']['variants'].update(
+                {'de.diamaneos': version}),
+            'version code with a zero first': lambda c: c['packages']['app.grapheneos.apps']['variants'].update(
+                {'03706': version}),
+            'unknown channel': lambda c: c['packages']['app.grapheneos.apps']['variants'].update(
+                {'3706': dict(version, channel='nightly')}),
+            'no signers': lambda c: c['packages']['app.grapheneos.apps'].pop('signatures'),
+            'signers not strings': lambda c: c['packages']['app.grapheneos.apps'].update(signatures=[1]),
+        }
+        published = self.work / 'published.sjson'
+        for which in ('catalog', 'published'):
+            for name, change in changes.items():
+                with self.subTest(which=which, change=name):
+                    catalog = {'time': 1_792_700_000, 'packages': self.versions(self.PUBLISHED)}
+                    last = {'time': 1_792_650_000, 'packages': self.versions(self.PUBLISHED)}
+                    change(catalog if which == 'catalog' else last)
+                    self.write_body(json.dumps(last).encode(), 'published.sjson')
+                    self.write_body(json.dumps(catalog).encode(), 'apps/metadata.1.0.sjson')
+                    with self.assertRaises(SystemExit):
+                        self.prepare.check(str(self.work), str(self.key), str(published))
+                    if which == 'catalog':
+                        with self.assertRaises(SystemExit):
+                            self.prepare.check(str(self.work), str(self.key), None)
+        # Unchanged, both pass.
+        self.write_body(json.dumps({'time': 1_792_650_000, 'packages': self.versions(self.PUBLISHED)}).encode(),
+                        'published.sjson')
+        self.write_body(json.dumps({'time': 1_792_700_000, 'packages': self.versions(self.PUBLISHED)}).encode(),
+                        'apps/metadata.1.0.sjson')
+        self.prepare.check(str(self.work), str(self.key), str(published))
+        # A signed message that is no JSON, or JSON that is no object.
+        for body in (b'{"time": 1792700000, "packages": {', b'null', b'[]'):
+            self.write_body(body, 'apps/metadata.1.0.sjson')
+            with self.assertRaises(SystemExit, msg=body):
+                self.prepare.check(str(self.work), str(self.key), None)
+
+    def write_body(self, body, path):
+        (self.work / path).parent.mkdir(parents=True, exist_ok=True)
+        signature = base64.b64encode(b'Ed' + t.KEYNUM + t.ed25519.sign(t.SECRET, body))
+        (self.work / path).write_bytes(body + b'\n' + signature + b'\n')
+
     def test_check_refuses_a_published_catalog_signed_by_another_key(self):
         self.refused('published.sjson does not verify with', self.PUBLISHED, published_secret=b'\x01' * 32)
 
