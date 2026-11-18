@@ -25,6 +25,33 @@ The scripts need signify, apksigner and aapt2 from build tools 37 (generate.py r
 
 Icons are not in the signed catalog. They are fetched again only with a new catalog or after a run that stopped before it moved a fetched icon in, and a failed icon keeps the previous one. Packages GrapheneOS adds or drops, or signs with other keys, are logged and published anyway, as GrapheneOS's key is trusted for them. A new icon replaces the published one only after the new catalog. A failed run leaves the unit failed and the published catalog and its icons as they were.
 
+## Tests
+
 Run the tests with `python3 -m unittest discover -s tests` (Python 3.11 or newer). One test compares the package sets with Catalogs.kt in an AppStore checkout next to this one, or at `APPSTORE_SOURCE`.
+
+`tests/fuzz` holds Atheris fuzz targets with property checks for the mirror, our catalog's check, generate.py and import-apks.py. The tests above do not use them. `tests/fuzz/regress.tar.gz` is a small merged corpus of every target. Replay it on the builder whenever the mirror, the catalog check, generate.py or import-apks.py changes.
+
+The targets need Linux on x86_64 with Python 3.13, the only wheel `tests/fuzz/requirements.txt` allows, and OpenBSD signify. On Debian 13 without `python3-venv`, signify or root, as on the builder, set up a work folder once:
+
+```sh
+cd "$WORK"
+apt-get download python3-pip-whl signify-openbsd
+for deb in *.deb; do dpkg-deb -x "$deb" root; done
+python3 -m venv --without-pip venv
+pip=$(echo root/usr/share/python-wheels/pip-*.whl)
+venv/bin/python "$pip/pip" install --require-hashes \
+    -r "$APPS/tests/fuzz/requirements.txt"
+```
+
+Then replay from the checkout:
+
+```sh
+FUZZ_PYTHON="$WORK/venv/bin/python" FUZZ_SIGNIFY="$WORK/root/usr/bin/signify-openbsd" \
+    nice -n 19 tests/fuzz/run.sh replay "$WORK/replay"
+```
+
+- The replay runs every input once. It fails when a target stops or records a kind of finding that `tests/fuzz/known-findings.txt` does not list. That list is empty, so any finding fails it.
+- `run.sh TARGET SECONDS DIR` fuzzes one target, named by its file without `fuzz_`. The corpus, findings, log and throwaway test keys stay in DIR.
+- `run.sh merge DIR` writes `DIR/regress.tar.gz` from the archive and the corpora in `DIR/<target>`, minimised. It takes only the public test key.
 
 Source provenance and deployment: [DOWNSTREAM.md](DOWNSTREAM.md).
