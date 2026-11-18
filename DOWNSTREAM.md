@@ -8,6 +8,7 @@
 - `generate.py` takes the signer only from apksigner's line for a single signer, and stops when the output names another signer's certificate.
 - `generate.py` hashes each APK, its .br and its v4 signature on every run, lists the hash of the APK whose signer it checked, and stops when a kept `.sha256` file differs.
 - `generate.py` checks with conditions that stop the run, not `assert`, which `python3 -O` drops.
+- `generate.py` takes only `channel` from a version's `channel.toml`, and only `channel`, `features`, `requiredSystemFeatures` and `staticDeps` from its `props.toml`, so neither changes what the APK gives, such as its versionCode, hashes, minSdk or label.
 - `generate.py` makes no deltas unless `DIAMANEOS_DELTAS=1`, which needs the `ina` tool.
 - `generate.py` makes no delta from a version that cannot apply one (`NO_DELTA_SOURCES`): App Store 3701.
 - `compress-apks` and `process-static` stop when brotli or zopfli fails, so no empty compressed file is listed or served.

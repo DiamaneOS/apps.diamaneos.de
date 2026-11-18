@@ -142,9 +142,31 @@ def load_props(dir, name):
     file_path = path.join(dir, name + ".toml")
     if path.isfile(file_path):
         with open(file_path, "rb") as f:
-            return tomllib.load(f)
+            # DiamaneOS: a file that does not parse is named.
+            try:
+                return tomllib.load(f)
+            except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+                raise Exception(file_path + ": " + str(e))
     else:
         return {}
+
+# DiamaneOS: the keys a version's channel.toml and props.toml may set, with the type of each value. channel.toml
+# sets the release channel. props.toml sets what the App Store checks before it offers a version: the system
+# features a pinned maker's app needs (prepare.py), required features and static dependencies (Repo.kt). Neither
+# sets what the APK and its files give, such as versionCode, the hashes, minSdk or the label.
+VERSION_PROPS = {
+    "channel": {"channel": str},
+    "props": {"channel": str, "features": list, "requiredSystemFeatures": list, "staticDeps": list},
+}
+
+def load_version_props(pkg_path, name):
+    props = load_props(pkg_path, name)
+    allowed = VERSION_PROPS[name]
+    for key, value in props.items():
+        if key not in allowed or not isinstance(value, allowed[key]) or (
+                isinstance(value, list) and not all(isinstance(item, str) and item for item in value)):
+            raise Exception(path.join(pkg_path, name + ".toml") + ": may not set " + key + " to " + repr(value))
+    return props
 
 aapt2_limiter = threading.Semaphore(os.cpu_count())
 
@@ -324,10 +346,10 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
 
     require(pkg_props.get("minSdk") != None, pkg_path + ": no minSdkVersion")
 
-    for key,value in load_props(pkg_path, "channel").items():
+    for key,value in load_version_props(pkg_path, "channel").items():
         pkg_props[key] = value
 
-    for key,value in load_props(pkg_path, "props").items():
+    for key,value in load_version_props(pkg_path, "props").items():
         pkg_props[key] = value
 
     require(pkg_props.get("channel") in ["alpha", "beta", "stable", "old"], pkg_path + ": no known channel")

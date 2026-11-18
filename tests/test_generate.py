@@ -162,6 +162,37 @@ class ChecksTests(unittest.TestCase):
                         'Source Stamp Signer: certificate SHA-256 digest: ' + OTHER]
         self.process()
 
+    def test_props_set_only_their_keys(self):
+        # The keys this repository's props.toml files have used, and the Fairphone Camera's features.
+        props = ('channel = "beta"\nfeatures = ["de.diamaneos.fairphone_camera", "de.diamaneos.fairphone_camera.apk_0"]\n'
+                 'requiredSystemFeatures = ["grapheneos.version >= 2025102300"]\nstaticDeps = ["app.grapheneos.apps >= 34"]\n')
+        (self.version / 'props.toml').write_text(props)
+        _, listed = self.process()
+        self.assertEqual(listed['channel'], 'beta')
+        self.assertEqual(listed['features'], ['de.diamaneos.fairphone_camera', 'de.diamaneos.fairphone_camera.apk_0'])
+        self.assertEqual(listed['staticDeps'], ['app.grapheneos.apps >= 34'])
+        for name, text in (('props.toml', 'versionCode = 999\n'), ('props.toml', 'apkHashes = ["00"]\n'),
+                           ('props.toml', 'apks = ["../x.apk"]\n'), ('props.toml', 'minSdk = "x"\n'),
+                           ('props.toml', 'label = ""\n'), ('props.toml', 'features = "de.diamaneos.fairphone_camera"\n'),
+                           ('props.toml', 'staticDeps = [1]\n'), ('props.toml', 'features = [""]\n'),
+                           ('props.toml', 'channel = 1\n'), ('channel.toml', 'channel = "stable"\nminSdk = 1\n'),
+                           ('channel.toml', 'channel = "stable"\nfeatures = ["x"]\n')):
+            with self.subTest(name=name, text=text):
+                (self.version / 'props.toml').unlink(missing_ok=True)
+                (self.version / 'channel.toml').write_text('channel = "stable"\n')
+                (self.version / name).write_text(text)
+                with self.assertRaisesRegex(Exception, name + ': may not set '):
+                    self.process()
+
+    def test_toml_that_does_not_parse_is_named(self):
+        for name in ('channel.toml', 'props.toml'):
+            with self.subTest(name=name):
+                (self.version / 'channel.toml').write_text('channel = "stable"\n')
+                (self.version / name).write_text('[x\n')
+                with self.assertRaisesRegex(Exception, str(self.version / name) + ': '):
+                    self.process()
+                (self.version / 'props.toml').unlink(missing_ok=True)
+
     def test_compressed_file_from_another_apk(self):
         os.utime(self.version / 'base.apk.br', ns=(0, 0))
         with self.assertRaisesRegex(Exception, 'not made from this APK'):
