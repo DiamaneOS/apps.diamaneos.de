@@ -239,6 +239,16 @@ def write_sha256(file_path, dst_path):
     sha256 = file_sha256(file_path)
     write_text(sha256, dst_path)
 
+# DiamaneOS: each run hashes the file itself. A cached hash that differs stops the run.
+def checked_sha256(file_path):
+    sha256 = file_sha256(file_path)
+    hash_path = file_path + ".sha256"
+    if not path.isfile(hash_path):
+        write_text(sha256, hash_path)
+    elif Path(hash_path).read_text() != sha256:
+        raise Exception("cached hash differs from " + file_path)
+    return sha256
+
 def write_text(text, dst_path):
     tmp_path = dst_path + ".write_text_tmp"
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -331,48 +341,41 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
             if has_v4_sigs is False:
                 # at least one previously encountered APK didn't have v4 sig
                 raise Exception("one or more APK is missing a v4 signature: " + pkg_path)
-            apk_idsig_hash_path = apk_idsig_path + ".sha256"
-            if not path.isfile(apk_idsig_hash_path):
-                write_sha256(apk_idsig_path, apk_idsig_hash_path)
-
             pkg_props.setdefault("v4SignatureSizes", []).append(path.getsize(apk_idsig_path))
-            pkg_props.setdefault("v4SignatureHashes", []).append(Path(apk_idsig_hash_path).read_text())
+            pkg_props.setdefault("v4SignatureHashes", []).append(checked_sha256(apk_idsig_path))
             has_v4_sigs = True
         else:
             if has_v4_sigs:
                 raise Exception("v4 signature is missing for " + apk_path)
             has_v4_sigs = False
 
-        apk_hash_path = apk_path + ".sha256"
+        # DiamaneOS: every run checks each APK and lists the hash of the bytes it checked.
+        apk_hash = checked_sha256(apk_path)
+        if SINGLE_THREAD: print("processing " + apk_path)
 
-        if not path.isfile(apk_hash_path):
-            if SINGLE_THREAD: print("processing " + apk_path)
+        if (load_cert_digest(apk_path) != base_apk_signature):
+            # all apk splits must have the same signature
+            raise Exception("signature mismatch, apk: " + apk_path)
 
-            if (load_cert_digest(apk_path) != base_apk_signature):
-                # all apk splits must have the same signature
-                raise Exception("signature mismatch, apk: " + apk_path)
+        badging = load_aapt2_badging(apk_path)
+        lines = badging.split("\n")
+        apk_version_code = None
+        for kv in shlex.split(lines[0]):
+            if kv.startswith("versionCode"):
+                assert apk_version_code == None, apk_path
+                apk_version_code = int(kv.split("=")[1])
+            elif kv.startswith("name"):
+                assert pkg_name == kv.split("=")[1], apk_path
+        # all apk splits must have the same version code
+        assert pkg_props["versionCode"] == apk_version_code, apk_path
+        if file_sha256(apk_path) != apk_hash:
+            raise Exception(apk_path + " changed while it was checked")
 
-            badging = load_aapt2_badging(apk_path)
-            lines = badging.split("\n")
-            apk_version_code = None
-            for kv in shlex.split(lines[0]):
-                if kv.startswith("versionCode"):
-                    assert apk_version_code == None, apk_path
-                    apk_version_code = int(kv.split("=")[1])
-                elif kv.startswith("name"):
-                    assert pkg_name == kv.split("=")[1], apk_path
-            # all apk splits must have the same version code
-            assert pkg_props["versionCode"] == apk_version_code, apk_path
-            write_sha256(apk_path, apk_hash_path)
-
-        pkg_props["apkHashes"].append(Path(apk_hash_path).read_text())
+        pkg_props["apkHashes"].append(apk_hash)
         pkg_props["apkSizes"].append(int(path.getsize(apk_path)))
         pkg_props["apkGzSizes"].append(int(path.getsize(apk_gz_path)))
         pkg_props["apkBrSizes"].append(int(path.getsize(apk_br_path)))
-        apk_br_hash_path = apk_br_path + ".sha256"
-        if not path.isfile(apk_br_hash_path):
-            write_sha256(apk_br_path, apk_br_hash_path)
-        pkg_props["apkBrHashes"].append(Path(apk_br_hash_path).read_text())
+        pkg_props["apkBrHashes"].append(checked_sha256(apk_br_path))
         pkg_props["apks"].append(apk_name)
 
         name_parts = apk_name.split('.')
