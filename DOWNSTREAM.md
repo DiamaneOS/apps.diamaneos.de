@@ -5,6 +5,7 @@
 - `prepare.py --check` compares our new catalog with the published one: it must be newer, and a package dropped or a channel's offered version set back needs `--allow-drop`.
 - `generate.py` also reads a label written in the manifest (aapt2 prints it only in its `application:` line), as the App Store needs a label in each version.
 - `generate.py` keeps no cache files for the signer and aapt2's output, so every run checks each APK's signer against the inventory.
+- `generate.py` takes the signer only from apksigner's line for a single signer, and stops when the output names another signer's certificate.
 - `generate.py` hashes each APK, its .br and its v4 signature on every run, lists the hash of the APK whose signer it checked, and stops when a kept `.sha256` file differs.
 - `generate.py` checks with conditions that stop the run, not `assert`, which `python3 -O` drops.
 - `generate.py` makes no deltas unless `DIAMANEOS_DELTAS=1`, which needs the `ina` tool.

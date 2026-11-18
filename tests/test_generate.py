@@ -94,9 +94,11 @@ class ChecksTests(unittest.TestCase):
         self.first = f"package: name='{PKG}' versionCode='37' versionName='37'"
         self.lines = ["minSdkVersion:'37'", "application-label:'Auditor'"]
 
+        self.signers = ['V2 Signer: certificate SHA-256 digest: ' + OURS]
+
         def check_output(argv, *args, **kwargs):
             if argv[0] == 'apksigner':
-                return ('V2 Signer: certificate SHA-256 digest: ' + OURS + '\n').encode()
+                return '\n'.join([*self.signers, '']).encode()
             return '\n'.join([self.first, *self.lines, '']).encode()
         self.generate.subprocess = types.SimpleNamespace(check_output=check_output)
         path = self.version / 'base.apk'
@@ -139,6 +141,26 @@ class ChecksTests(unittest.TestCase):
                 (self.version / 'channel.toml').write_text(channel)
                 with self.assertRaisesRegex(Exception, 'no known channel'):
                     self.process()
+
+    def test_one_signer_only(self):
+        # As apksigner of build tools 37 prints them.
+        ours = 'V3.0 Signer: certificate SHA-256 digest: ' + OURS
+        for lines in ([ours, 'Signer #1 certificate SHA-256 digest: ' + OTHER],
+                      [ours, 'V3.1 Signer: (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: ' + OTHER],
+                      ['V3.1 Signer: (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: ' + OURS,
+                       'V3.0 Signer: (minSdkVersion=28, maxSdkVersion=32) certificate SHA-256 digest: ' + OTHER],
+                      ['Number of signers: 2', 'V2 Signer #1: certificate SHA-256 digest: ' + OURS,
+                       'V2 Signer #2: certificate SHA-256 digest: ' + OTHER],
+                      ['Number of signers: 2', ours], [ours, 'V1 Signer: certificate SHA-256 digest: ' + OTHER]):
+            with self.subTest(lines=lines):
+                self.signers = lines
+                with self.assertRaisesRegex(Exception, 'more than one signer|find certificate'):
+                    self.process()
+        # A source stamp is no signer, and a public key's digest no certificate.
+        self.signers = ['Verified using v3 scheme (APK Signature Scheme v3): true', 'Number of signers: 1', ours,
+                        'V3.0 Signer: public key SHA-256 digest: ' + OTHER,
+                        'Source Stamp Signer: certificate SHA-256 digest: ' + OTHER]
+        self.process()
 
     def test_compressed_file_from_another_apk(self):
         os.utime(self.version / 'base.apk.br', ns=(0, 0))

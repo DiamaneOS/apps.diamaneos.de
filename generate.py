@@ -155,24 +155,26 @@ def load_aapt2_badging(apk_path):
 
 apksigner_limiter = threading.Semaphore(10) # apksigner runs in a JVM
 
+# DiamaneOS: apksigner prints a line with the SHA-256 of each signer's certificate: "V3.0 Signer: certificate
+# SHA-256 digest: ..." for the one signer of the newest scheme it verified, "V2 Signer #1: ..." for several, and
+# the signers of a key rotated for SDK ranges with their range. Only the first form is taken, and any other
+# signer's certificate in the output stops the run. A source stamp is no signer.
 def load_cert_digest(apk_path):
     with apksigner_limiter:
         apksigner_output = subprocess.check_output(["apksigner", "verify", "--print-certs", "--verbose", apk_path])
-    cert_digest = None
-    for line in apksigner_output.split(b'\n'):
-        split = re.split(r"^V[^\s]+ Signer: certificate SHA-256 digest: ", line.decode())
-        if (len(split) == 2):
-            if (cert_digest is not None):
-                if ("maxSdkVersion=" in line.decode()):
-                    # ignore secondary maxSdk-restricted signers
-                    continue
-                # Intentionally don't support APKs that have more than one signer
-                raise Exception(apk_path + " has more than one signer")
-            cert_digest = split[1]
-
-    if cert_digest is None:
+    certificates = []
+    for line in apksigner_output.decode(errors="replace").split("\n"):
+        if line.startswith("Number of signers: ") and line != "Number of signers: 1":
+            raise Exception(apk_path + " has more than one signer")
+        if " certificate SHA-256 digest: " in line and not line.startswith("Source Stamp Signer: "):
+            certificates.append(line)
+    # Intentionally don't support APKs that have more than one signer
+    if len(certificates) > 1:
+        raise Exception(apk_path + " has more than one signer")
+    split = re.split(r"^V[^\s]+ Signer: certificate SHA-256 digest: ", certificates[0]) if certificates else []
+    if len(split) != 2:
         raise Exception("didn't find certificate of " + apk_path)
-    return cert_digest
+    return split[1]
 
 all_abis = {"arm64-v8a", "x86_64", "armeabi-v7a", "x86"}
 # file name ABI qualifier replaces "-" with "_"
