@@ -31,6 +31,9 @@ for i in range(1, len(sys.argv)):
 
     assert version != None
     assert pkg_name != None
+    # DiamaneOS: both name a directory, so they must be a package name and a version code.
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+", pkg_name) or not re.fullmatch(r"[1-9][0-9]{0,18}", version):
+        raise Exception("unexpected package name or version code in " + src)
 
     dest_dir = "apps/packages/" + pkg_name + "/" + version
 

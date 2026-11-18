@@ -7,6 +7,7 @@
 - `generate.py` makes no deltas unless `DIAMANEOS_DELTAS=1`, which needs the `ina` tool.
 - `generate.py` makes no delta from a version that cannot apply one (`NO_DELTA_SOURCES`): App Store 3701.
 - `compress-apks` and `process-static` stop when brotli or zopfli fails, so no empty compressed file is listed or served.
+- `import-apks.py` refuses a package name or version code from aapt2 that is not one, as both name the directory it copies to.
 - `apps/packages` holds only our own packages. GrapheneOS's packages and their inherited version files were removed: they come from GrapheneOS's catalog.
 - Packages keep their own signing identities. Catalog authentication does not replace APK signature checks.
 - Our inventory turns off legacy fs-verity sidecars. Android 17 uses APK Signature Scheme v4 sidecars when supplied, alongside the APK's own signature and the catalog's hashes.
