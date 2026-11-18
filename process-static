@@ -30,6 +30,7 @@ rsync -at \
     apps/ static-tmp
 
 zopfli_preserve_time() {
+    set -o errexit -o nounset -o pipefail
     zopfli "$1"
     touch -r "$1" "$1.gz"
 }

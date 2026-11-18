@@ -14,42 +14,45 @@ if ! flock -n $fd; then
     exit 1
 fi
 
+# parallel runs these in a new shell, which does not inherit the options above.
 maybe_brotli() {
+    set -o errexit -o nounset -o pipefail
     COMP="$1.br"
     if [[ -f $COMP ]]; then
         return
     fi
 
     TMP="$COMP.tmp"
-    rm -f $TMP
+    rm -f "$TMP"
 
     echo "brotli $1"
     brotli --suffix=".br.tmp" "$1"
 
-    sync $TMP
-    mv $TMP $COMP
+    sync "$TMP"
+    mv "$TMP" "$COMP"
     # fully preserve file times, brotli reduces precision of mtime to a second
-    touch -r "$1" $COMP
+    touch -r "$1" "$COMP"
 }
 
 export -f maybe_brotli
 
 maybe_zopfli() {
+    set -o errexit -o nounset -o pipefail
     COMP="$1.gz"
     if [[ -f $COMP ]]; then
         return
     fi
 
     TMP="$COMP.tmp"
-    rm -f $TMP
+    rm -f "$TMP"
 
     echo "zopfli $1"
-    zopfli -c "$1" > $TMP
+    zopfli -c "$1" > "$TMP"
 
-    sync $TMP
-    mv $TMP $COMP
+    sync "$TMP"
+    mv "$TMP" "$COMP"
     # preserve file times
-    touch -r "$1" $COMP
+    touch -r "$1" "$COMP"
 }
 
 export -f maybe_zopfli
