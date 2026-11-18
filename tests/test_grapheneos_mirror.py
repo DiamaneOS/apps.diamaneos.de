@@ -62,6 +62,8 @@ class Upstream:
         self.requested = []
         # Paths whose connection drops before the whole file is sent.
         self.truncated = set()
+        # Paths sent as one chunk of a chunked body, whose connection drops before the last chunk.
+        self.cut_chunked = set()
 
     def apk(self, name, code, content, abis=None, v4=True, apk='base.apk', **extra):
         gz = gzip.compress(content, mtime=0)
@@ -145,6 +147,12 @@ class MirrorTests(unittest.TestCase):
                     self.end_headers()
                     return
                 data = upstream.files.get(path)
+                if data is not None and path in upstream.cut_chunked:
+                    self.send_response(200)
+                    self.send_header('Transfer-Encoding', 'chunked')
+                    self.end_headers()
+                    self.wfile.write(b'%x\r\n%s\r\n' % (len(data), data))
+                    return
                 self.send_response(200 if data is not None else 404)
                 # As GrapheneOS's server, each file with its length.
                 if data is not None:
@@ -366,6 +374,18 @@ class MirrorTests(unittest.TestCase):
                 with self.assertRaisesRegex(self.mirror.Refused, 'unexpected package name'):
                     self.run_mirror()
         self.assertFalse(any(self.tmp.rglob('etc')))
+
+    def test_chunked_body_cut_short_refused(self):
+        self.upstream.apk('app.vanadium.config', 1, b'one', v4=False)
+        self.upstream.catalog()
+        for path in ('metadata.1.0.sjson', 'packages/app.vanadium.config/1/base.apk.gz'):
+            with self.subTest(path=path):
+                self.upstream.cut_chunked = {path}
+                with self.assertRaisesRegex(self.mirror.Refused, path + ': incomplete'):
+                    self.run_mirror()
+                self.assertEqual(self.files(), [])
+        self.upstream.cut_chunked = set()
+        self.run_mirror()
 
     def test_redirect_refused(self):
         self.upstream.catalog()

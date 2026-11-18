@@ -89,6 +89,14 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 OPENER = urllib.request.build_opener(NoRedirect)
 
 
+def read(response, path, size):
+    """Up to size bytes of the body. A chunked body cut short raises IncompleteRead: it is incomplete too."""
+    try:
+        return response.read(size)
+    except http.client.IncompleteRead:
+        raise Refused(path + ": incomplete")
+
+
 def fetch(path, limit, out=None):
     """Bytes of UPSTREAM/path, or the byte count written to out. Larger than limit is refused."""
     url = UPSTREAM + "/" + path
@@ -103,14 +111,14 @@ def fetch(path, limit, out=None):
         # A dropped connection ends the body early without an error.
         length = response.headers.get("Content-Length")
         if out is None:
-            data = response.read(limit + 1)
+            data = read(response, path, limit + 1)
             if len(data) > limit:
                 raise Refused(path + " exceeds " + str(limit) + " bytes")
             if length is not None and str(len(data)) != length:
                 raise Refused(path + ": incomplete")
             return data
         total = 0
-        while block := response.read(CHUNK):
+        while block := read(response, path, CHUNK):
             total += len(block)
             if total > limit:
                 raise Refused(path + " exceeds " + str(limit) + " bytes")
