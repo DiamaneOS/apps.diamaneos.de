@@ -13,8 +13,9 @@ ROOT is the served grapheneos/ directory and STATE the job's own state. It needs
    the catalog's size and unpack to the catalog's size and SHA-256. Each .br (App Store 37) must have
    the catalog's size and SHA-256, and so must each .ina (a delta from an older version) with a size
    above 0. v4 signatures and icons are checked against the catalog's size and SHA-256 where it lists
-   them, and their format always. Icons are fetched again only with a new catalog, and a failed icon
-   keeps the previous one. A new icon replaces the published one only after the new catalog.
+   them, and their format always. Icons are fetched again only with a new catalog or after a run that
+   stopped before it moved a fetched icon in, and a failed icon keeps the previous one. A new icon
+   replaces the published one only after the new catalog.
 3. Only then publishes the catalog bytes unchanged. Files of a replaced catalog stay for KEEP_REPLACED,
    and files that neither this catalog nor a kept one lists are removed. Packages added, dropped or with
    other signers than in the previous catalog are logged.
@@ -347,7 +348,8 @@ def mirror_file(root, path, kind, expected, verified, new_catalog, staged):
     target = os.path.join(root, path)
     key = [kind, list(expected)]
     if kind == "icon":
-        if os.path.isfile(target) and not new_catalog:
+        # A staged icon is left only by a run that stopped before it moved the icon in, maybe after its catalog.
+        if os.path.isfile(target) and not new_catalog and not os.path.exists(target + ".new"):
             return 0
         try:
             # The published catalog may list the icon at this path, so it is replaced after the catalog.

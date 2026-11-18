@@ -623,6 +623,35 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(icon.read_bytes(), new_icon)
         self.assertFalse([f for f in self.files() if f.endswith(('.new', '.tmp'))])
 
+    def test_icon_left_staged_by_a_stopped_run_is_fetched_again(self):
+        self.standard()
+        package = self.upstream.packages['app.vanadium.browser']
+        package.update(iconSize=len(webp()), iconSha256=hashlib.sha256(webp()).hexdigest())
+        self.upstream.catalog()
+        self.run_mirror()
+        icon = self.root / 'packages/app.vanadium.browser/icon.webp'
+        new_icon = webp() + b'new'
+        self.upstream.files['packages/app.vanadium.browser/icon.webp'] = new_icon
+        package.update(iconSize=len(new_icon), iconSha256=hashlib.sha256(new_icon).hexdigest())
+        self.upstream.time += 10
+        catalog = self.upstream.catalog()
+        # The run stops after it published the catalog, before it moved the new icon in.
+        real = os.replace
+
+        def replace(source, target):
+            if str(target).endswith('/icon.webp'):
+                raise OSError('stopped')
+            return real(source, target)
+        with unittest.mock.patch.object(self.mirror.os, 'replace', replace), self.assertRaises(OSError):
+            self.run_mirror()
+        self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), catalog)
+        self.assertEqual(icon.read_bytes(), webp())
+        # The next run, with the same catalog, fetches the icon again and moves it in.
+        self.run_mirror()
+        self.assertEqual(icon.read_bytes(), new_icon)
+        self.assertFalse([f for f in self.files() if f.endswith(('.new', '.tmp'))])
+        self.assertIn(' 0 MB fetched, 0 removed', self.run_mirror())
+
     def test_apk_sizes_must_be_whole_numbers(self):
         for column, value in (('apkGzSizes', '20'), ('apkGzSizes', 1.5), ('apkGzSizes', True), ('apkSizes', -1),
                               ('apkBrSizes', 0), ('apkBrSizes', None), ('apkSizes', [3])):
