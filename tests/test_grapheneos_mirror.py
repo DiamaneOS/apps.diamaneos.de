@@ -20,6 +20,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
@@ -104,6 +105,10 @@ class Upstream:
     def catalog(self, secret=SECRET):
         body = json.dumps({'time': self.time, 'packages': self.packages, 'fsVerityCerts': {}},
                           separators=(',', ':')).encode()
+        return self.signed(body, secret)
+
+    def signed(self, body, secret=SECRET):
+        """Serves body as the catalog, signed, whether it is a valid catalog or not."""
         signature = base64.b64encode(b'Ed' + KEYNUM + ed25519.sign(secret, body))
         self.files['metadata.1.0.sjson'] = body + b'\n' + signature + b'\n'
         return self.files['metadata.1.0.sjson']
@@ -156,6 +161,9 @@ class MirrorTests(unittest.TestCase):
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
         self.mirror.UPSTREAM = f'http://127.0.0.1:{self.server.server_port}'
+        # The mirror's clock, an hour after the test catalog's time.
+        self.clock = self.upstream.time + 3600
+        self.mirror.now = lambda: self.clock
         self.root, self.state = self.tmp / 'root', self.tmp / 'state'
         self.root.mkdir()
 
@@ -259,7 +267,7 @@ class MirrorTests(unittest.TestCase):
             self.run_mirror()
         self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), published)
 
-    def test_previous_versions_stay_for_one_update(self):
+    def test_replaced_versions_stay_24_hours(self):
         u = self.upstream
         u.apk('app.vanadium.config', 1, b'one', v4=False)
         u.catalog()
@@ -274,6 +282,7 @@ class MirrorTests(unittest.TestCase):
         u.apk('app.vanadium.config', 3, b'three', v4=False)
         u.time += 1
         u.catalog()
+        self.clock += self.mirror.KEEP_REPLACED + 1
         self.run_mirror()
         self.assertEqual(self.files(), ['metadata.1.0.sjson',
                                         'packages/app.vanadium.config/2/base.apk.br',
@@ -538,7 +547,7 @@ class MirrorTests(unittest.TestCase):
         with self.assertRaisesRegex(self.mirror.Refused, 'does not match'):
             self.run_mirror()
 
-    def test_deltas_of_the_previous_catalog_stay_for_one_update(self):
+    def test_deltas_of_a_replaced_catalog_stay_24_hours(self):
         u = self.upstream
         path = 'packages/app.vanadium.config/2/base.apk.1.ina'
         u.apk('app.vanadium.config', 2, b'two', v4=False)
@@ -555,6 +564,7 @@ class MirrorTests(unittest.TestCase):
         u.apk('app.vanadium.config', 4, b'four', v4=False)
         u.time += 1
         u.catalog()
+        self.clock += self.mirror.KEEP_REPLACED + 1
         self.run_mirror()
         self.assertNotIn(path, self.files())
 
@@ -633,6 +643,218 @@ class MirrorTests(unittest.TestCase):
         with self.assertRaisesRegex(self.mirror.Refused, 'does not match'):
             self.run_mirror()
         self.assertEqual(self.files(), [])
+
+    def remembered(self):
+        return json.loads((self.state / 'catalogs.json').read_text())
+
+    def test_floor_survives_an_emptied_or_removed_served_folder(self):
+        self.standard()
+        first = self.upstream.catalog()
+        self.run_mirror()
+        self.upstream.time -= 1
+        self.upstream.catalog()
+        for gone in (False, True):
+            with self.subTest(gone=gone):
+                shutil.rmtree(self.root)
+                if not gone:
+                    self.root.mkdir()
+                with self.assertRaisesRegex(self.mirror.Refused, 'older than one published before'):
+                    self.run_mirror()
+                self.assertFalse((self.root / 'metadata.1.0.sjson').exists())
+        # The catalog at the floor itself is taken again.
+        self.upstream.time += 1
+        self.assertEqual(self.upstream.catalog(), first)
+        self.run_mirror()
+        self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), first)
+
+    def test_floor_seeded_from_the_served_catalog(self):
+        """A host that served a catalog before the floor existed takes the served catalog's time."""
+        u = self.upstream
+        u.apk('app.vanadium.config', 1, b'one', v4=False)
+        u.catalog()
+        self.run_mirror()
+        (self.state / 'catalogs.json').unlink()
+        # Even a run that fails later keeps the seeded floor.
+        u.apk('app.vanadium.config', 2, b'two', v4=False)
+        u.time += 10
+        u.catalog()
+        u.files['packages/app.vanadium.config/2/base.apk.gz'] = gzip.compress(b'TWO', mtime=0)
+        with self.assertRaisesRegex(self.mirror.Refused, 'does not match'):
+            self.run_mirror()
+        self.assertEqual(self.remembered()['floor'], u.time - 10)
+        (self.root / 'metadata.1.0.sjson').unlink()
+        del u.packages['app.vanadium.config']['variants']['2']
+        u.time -= 11
+        u.catalog()
+        with self.assertRaisesRegex(self.mirror.Refused, 'older than one published before'):
+            self.run_mirror()
+
+    def test_old_catalog_fails_the_run_after_the_normal_work(self):
+        u = self.upstream
+        u.apk('app.vanadium.config', 1, b'one', v4=False)
+        u.catalog()
+        self.run_mirror()
+        del u.packages['app.vanadium.config']['variants']['1']
+        u.apk('app.vanadium.config', 2, b'two', v4=False)
+        u.time += 1
+        catalog = u.catalog()
+        self.clock = u.time + self.mirror.MAX_AGE + 1
+        with self.assertRaisesRegex(self.mirror.Stale, '30 days old, more than 30'):
+            self.run_mirror()
+        self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), catalog)
+        both = ['metadata.1.0.sjson',
+                'packages/app.vanadium.config/1/base.apk.br', 'packages/app.vanadium.config/1/base.apk.gz',
+                'packages/app.vanadium.config/2/base.apk.br', 'packages/app.vanadium.config/2/base.apk.gz']
+        self.assertEqual(self.files(), both)
+        # Each later run keeps serving and checking it, and fails again.
+        (self.state / 'verified.json').unlink()
+        (self.root / 'packages/app.vanadium.config/2/base.apk.gz').write_bytes(gzip.compress(b'TWO', mtime=0))
+        with self.assertRaisesRegex(self.mirror.Refused, 'does not match'):
+            self.run_mirror()
+        (self.root / 'packages/app.vanadium.config/2/base.apk.gz').write_bytes(gzip.compress(b'two', mtime=0))
+        with self.assertRaises(self.mirror.Stale):
+            self.run_mirror()
+        self.assertEqual(self.files(), both)
+        # At the limit itself it does not fail.
+        self.clock = u.time + self.mirror.MAX_AGE
+        self.run_mirror()
+
+    def test_caps_refuse_before_downloading(self):
+        self.standard()
+        del self.upstream.packages['app.vanadium.browser']['iconType']
+        self.upstream.catalog()
+        gz = len(self.upstream.files['packages/app.vanadium.browser/1/base.apk.gz'])
+        for cap, value, refusal in (('MAX_FILE', gz - 1, '1/base.apk.gz exceeds the cap of %d bytes' % (gz - 1)),
+                                    ('MAX_TOTAL', 100, 'exceed the cap of 100 bytes in total'),
+                                    ('MAX_FILES', 4, 'lists 5 files, more than the cap of 4')):
+            with self.subTest(cap=cap):
+                self.upstream.requested.clear()
+                with unittest.mock.patch.object(self.mirror, cap, value):
+                    with self.assertRaisesRegex(self.mirror.Refused, refusal):
+                        self.run_mirror()
+                self.assertEqual(self.upstream.requested, ['metadata.1.0.sjson'])
+                self.assertEqual(self.files(), [])
+        # A file without a size in the catalog counts at its fetch limit.
+        variant = self.upstream.packages['app.vanadium.browser']['variants']['1']
+        del variant['v4SignatureSizes'], variant['v4SignatureHashes']
+        self.upstream.catalog()
+        with unittest.mock.patch.object(self.mirror, 'MAX_FILE', self.mirror.MAX_IDSIG - 1):
+            with self.assertRaisesRegex(self.mirror.Refused, '1/base.apk.idsig exceeds the cap'):
+                self.run_mirror()
+        self.run_mirror()
+
+    def test_path_listed_twice_refused(self):
+        def twice_apk(variant):
+            for column in ('apks', 'apkHashes', 'apkSizes', 'apkGzSizes', 'apkBrHashes', 'apkBrSizes',
+                           'apkDeltaSizes', 'apkDeltaHashes', 'apkDeltaSrcHashes'):
+                variant[column] = variant[column] * 2
+
+        def twice_delta(variant):
+            variant['availableDeltaVersions'] = [1, 1]
+            for column in ('apkDeltaSizes', 'apkDeltaHashes', 'apkDeltaSrcHashes'):
+                variant[column] = variant[column] * 2
+
+        for change in (twice_apk, twice_delta):
+            with self.subTest(change.__name__):
+                self.upstream.packages.clear()
+                self.upstream.apk('app.vanadium.config', 2, b'two', v4=False)
+                change(self.upstream.delta('app.vanadium.config', 2, {1: b'from one'}))
+                self.upstream.catalog()
+                with self.assertRaisesRegex(self.mirror.Refused, 'is listed twice'):
+                    self.run_mirror()
+                self.assertEqual(self.files(), [])
+        # So is a package or version the JSON lists twice, which parsers may read differently.
+        body = (b'{"time":%d,"packages":{"app.vanadium.config":{"variants":{}},'
+                b'"app.vanadium.config":{"variants":{}}}}' % self.upstream.time)
+        self.upstream.signed(body)
+        with self.assertRaisesRegex(self.mirror.Refused, 'listed twice'):
+            self.run_mirror()
+
+    def test_malformed_fields_refused_cleanly(self):
+        def package(**fields):
+            return lambda p: p.update(fields)
+
+        def variant(**fields):
+            return lambda p: p['variants']['1'].update(fields)
+
+        changes = {'package not an object': lambda p: p.clear() or p.update(x=1),
+                   'variants a list': package(variants=[]),
+                   'variants missing': lambda p: p.pop('variants'),
+                   'originalPackage a number': package(originalPackage=5),
+                   'signatures text': package(signatures='aa'),
+                   'variant text': lambda p: p['variants'].update({'1': 'x'}),
+                   'abis text': variant(abis='arm64-v8a'),
+                   'abis numbers': variant(abis=[64]),
+                   'apks text': variant(apks='base.apk'),
+                   'apk name a number': variant(apks=[5]),
+                   'apk hash a number': variant(apkHashes=[5]),
+                   'hasV4Signatures text': variant(hasV4Signatures='yes'),
+                   'delta versions a number': variant(availableDeltaVersions=5, apkDeltaSizes=[],
+                                                      apkDeltaHashes=[], apkDeltaSrcHashes=[]),
+                   'delta sizes an object': variant(availableDeltaVersions=[1], apkDeltaSizes={'1': 1},
+                                                    apkDeltaHashes=['aa' * 32], apkDeltaSrcHashes=['aa' * 32])}
+        for name, change in changes.items():
+            with self.subTest(name):
+                self.upstream.packages.clear()
+                self.upstream.apk('app.vanadium.config', 1, b'one', v4=False)
+                change(self.upstream.packages['app.vanadium.config'])
+                self.upstream.catalog()
+                with self.assertRaisesRegex(self.mirror.Refused, 'unexpected'):
+                    self.run_mirror()
+                self.assertEqual(self.files(), [])
+        bodies = {'not an object': b'[]', 'time true': b'{"time":true,"packages":{}}',
+                  'not JSON': b'{"time":1,', 'not UTF-8': b'{"time":1,"packages":{"\xff":{}}}',
+                  'nested too deep': b'[' * 100000 + b']' * 100000}
+        for name, body in bodies.items():
+            with self.subTest(name):
+                self.upstream.signed(body)
+                with self.assertRaisesRegex(self.mirror.Refused, 'unexpected catalog contents'):
+                    self.run_mirror()
+                self.assertEqual(self.files(), [])
+        # An icon type that is not text only leaves the package without an icon, as an unknown one.
+        self.upstream.packages.clear()
+        self.upstream.apk('app.vanadium.config', 1, b'one', v4=False)['iconType'] = ['webp']
+        self.upstream.catalog()
+        self.run_mirror()
+        self.assertEqual(self.files(), ['metadata.1.0.sjson', 'packages/app.vanadium.config/1/base.apk.br',
+                                        'packages/app.vanadium.config/1/base.apk.gz'])
+
+    def test_replaced_catalog_files_stay_24_hours_then_go(self):
+        u = self.upstream
+        one = ['packages/app.vanadium.config/1/base.apk.br', 'packages/app.vanadium.config/1/base.apk.gz']
+        two = ['packages/app.vanadium.config/2/base.apk.br', 'packages/app.vanadium.config/2/base.apk.gz']
+        three = ['packages/app.vanadium.config/3/base.apk.br', 'packages/app.vanadium.config/3/base.apk.gz']
+        u.apk('app.vanadium.config', 1, b'one', v4=False)
+        u.catalog()
+        self.run_mirror()
+        del u.packages['app.vanadium.config']['variants']['1']
+        u.apk('app.vanadium.config', 2, b'two', v4=False)
+        u.time += 1
+        u.catalog()
+        self.run_mirror()
+        replaced = self.clock
+        # The next runs, as every 15 minutes, keep the replaced catalog's files.
+        self.clock += 15 * 60
+        self.assertIn('0 removed, 2 kept from replaced catalogs', self.run_mirror())
+        self.assertEqual(self.files(), ['metadata.1.0.sjson'] + one + two)
+        # So does another new catalog within the 24 hours, for both catalogs it replaced.
+        self.clock = replaced + 12 * 3600
+        del u.packages['app.vanadium.config']['variants']['2']
+        u.apk('app.vanadium.config', 3, b'three', v4=False)
+        u.time += 1
+        u.catalog()
+        self.run_mirror()
+        self.assertEqual(self.files(), ['metadata.1.0.sjson'] + one + two + three)
+        self.clock = replaced + self.mirror.KEEP_REPLACED - 1
+        self.assertIn('0 removed, 4 kept', self.run_mirror())
+        self.clock += 2
+        self.assertIn('2 removed, 2 kept', self.run_mirror())
+        self.assertEqual(self.files(), ['metadata.1.0.sjson'] + two + three)
+        self.assertEqual(set(self.remembered()['kept']), set(two))
+        self.clock += 12 * 3600
+        self.run_mirror()
+        self.assertEqual(self.files(), ['metadata.1.0.sjson'] + three)
+        self.assertEqual(self.remembered(), {'floor': u.time, 'kept': {}})
 
 
 if __name__ == '__main__':

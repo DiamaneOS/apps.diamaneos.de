@@ -6,16 +6,19 @@
 ROOT is the served grapheneos/ directory and STATE the job's own state. It needs no key.
 
 1. Fetches GrapheneOS's catalog, checks its signature with grapheneos-apps.0.pub (signify) and that it
-   is not older than the published one.
-2. Fetches every APK the App Store may take from it for arm64-v8a: GrapheneOS's packages without ours
+   is not older than the published one or the newest one ever published (the floor in STATE).
+2. Refuses a catalog that lists more files, larger files or more bytes in total than the caps, or a path
+   twice. Fetches every APK the App Store may take from it for arm64-v8a: GrapheneOS's packages without ours
    and without the excluded ones, as in the App Store's Catalogs.kt. Each .gz (App Store 36) must have
    the catalog's size and unpack to the catalog's size and SHA-256. Each .br (App Store 37) must have
    the catalog's size and SHA-256, and so must each .ina (a delta from an older version) with a size
    above 0. v4 signatures and icons are checked against the catalog's size and SHA-256 where it lists
    them, and their format always. Icons are fetched again only with a new catalog, and a failed icon
    keeps the previous one. A new icon replaces the published one only after the new catalog.
-3. Only then publishes the catalog bytes unchanged. Files neither this nor the previous catalog lists
-   are removed. Packages added, dropped or with other signers than in the previous catalog are logged.
+3. Only then publishes the catalog bytes unchanged. Files of a replaced catalog stay for KEEP_REPLACED,
+   and files that neither this catalog nor a kept one lists are removed. Packages added, dropped or with
+   other signers than in the previous catalog are logged.
+4. Fails after all this when GrapheneOS's catalog is older than MAX_AGE, so that monitoring alerts.
 """
 
 import fcntl
@@ -29,6 +32,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 import zlib
@@ -53,10 +57,27 @@ MAX_CATALOG = 8 * 1024 * 1024
 MAX_IDSIG = 16 * 1024 * 1024
 MAX_ICON = 1024 * 1024
 CHUNK = 1024 * 1024
+# Caps on what one catalog may list, far above GrapheneOS's catalog of 2026-11 (2,570 files, 2.53 GiB,
+# the largest 132 MiB).
+MAX_FILE = 512 * 1024 * 1024
+MAX_TOTAL = 20 * 1024 * 1024 * 1024
+MAX_FILES = 20000
+# A run fails after its normal work when GrapheneOS's catalog is older than this, so that monitoring alerts.
+MAX_AGE = 30 * 24 * 3600
+# Files of a replaced catalog stay this long, for phones that read it just before.
+KEEP_REPLACED = 24 * 3600
 
 
 class Refused(Exception):
     pass
+
+
+class Stale(Exception):
+    """The run did its work, but GrapheneOS's catalog is older than MAX_AGE."""
+
+
+def now():
+    return int(time.time())
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -124,37 +145,64 @@ def verify_catalog(data, published):
     shutil.rmtree(work)
     if result.returncode != 0:
         raise Refused("catalog signature refused")
-    catalog = json.loads(data[:-102])
-    if not isinstance(catalog.get("time"), int) or not isinstance(catalog.get("packages"), dict):
+    try:
+        catalog = json.loads(data[:-102], object_pairs_hook=unique_keys)
+    except (ValueError, RecursionError) as e:
+        raise Refused("unexpected catalog contents (" + str(e) + ")")
+    if (not isinstance(catalog, dict) or type(catalog.get("time")) is not int
+            or not isinstance(catalog.get("packages"), dict)):
         raise Refused("unexpected catalog contents")
     return catalog
 
 
+def unique_keys(pairs):
+    """A JSON object without a key twice, which parsers may read differently."""
+    value = dict(pairs)
+    if len(value) != len(pairs):
+        raise Refused("a key is listed twice in the catalog")
+    return value
+
+
 def needed_files(catalog):
-    """(path, kind, expected) for every file the App Store may fetch from this catalog."""
+    """(path, kind, expected) for every file the App Store may fetch from this catalog, within the caps."""
     files = []
     for name, package in sorted(catalog["packages"].items()):
+        if not isinstance(package, dict) or not isinstance(package.get("originalPackage", ""), str):
+            raise Refused("unexpected package entry for " + repr(name))
         if not listed(name, package):
             continue
         if not NAME.fullmatch(name):
             raise Refused("unexpected package name " + repr(name))
+        signatures = package.get("signatures", [])
+        if not isinstance(signatures, list) or not all(isinstance(s, str) for s in signatures):
+            raise Refused(name + ": unexpected signatures")
+        if not isinstance(package.get("variants"), dict):
+            raise Refused(name + ": unexpected variants")
         icon = package.get("iconType")
         # An unknown icon type only leaves the package without an icon.
-        if icon in ICONS:
+        if isinstance(icon, str) and icon in ICONS:
             files.append(("packages/" + name + "/icon." + icon, "icon", (icon,) + sized(package, "iconSize", "iconSha256")))
         for code, variant in sorted(package["variants"].items()):
             if not VERSION.fullmatch(code):
                 raise Refused(name + ": unexpected version " + repr(code))
-            if "abis" in variant and ABI not in variant["abis"]:
+            if not isinstance(variant, dict):
+                raise Refused(name + "/" + code + ": unexpected variant")
+            abis = variant.get("abis", [ABI])
+            if not isinstance(abis, list) or not all(isinstance(a, str) for a in abis):
+                raise Refused(name + "/" + code + ": unexpected abis")
+            if ABI not in abis:
                 continue
-            columns = ("apks", "apkHashes", "apkSizes", "apkGzSizes", "apkBrHashes", "apkBrSizes")
-            rows = list(zip(*(variant.get(c, []) for c in columns)))
-            if not rows or any(len(variant.get(c, [])) != len(rows) for c in columns):
+            columns = [variant.get(c, []) for c in ("apks", "apkHashes", "apkSizes", "apkGzSizes", "apkBrHashes", "apkBrSizes")]
+            rows = list(zip(*columns)) if all(isinstance(c, list) for c in columns) else []
+            if not rows or any(len(c) != len(rows) for c in columns):
                 raise Refused(name + "/" + code + ": unexpected APK list")
             v4 = variant.get("hasV4Signatures", False)
+            if not isinstance(v4, bool):
+                raise Refused(name + "/" + code + ": unexpected hasV4Signatures")
             apk_deltas = deltas(name + "/" + code, variant, len(rows))
             for i, (apk, digest, size, gz_size, br_digest, br_size) in enumerate(rows):
-                if (not APK.fullmatch(apk) or not all(map(SHA256.fullmatch, (digest, br_digest)))
+                if (not all(isinstance(s, str) for s in (apk, digest, br_digest)) or not APK.fullmatch(apk)
+                        or not all(map(SHA256.fullmatch, (digest, br_digest)))
                         or not all(type(n) is int and n > 0 for n in (size, gz_size, br_size))):
                     raise Refused(name + "/" + code + ": unexpected APK entry")
                 path = "packages/" + name + "/" + code + "/" + apk
@@ -164,14 +212,35 @@ def needed_files(catalog):
                     files.append((path + "." + source + ".ina", "ina", (delta_size, delta_digest)))
                 if v4:
                     files.append((path + ".idsig", "idsig", sized(variant, "v4SignatureSizes", "v4SignatureHashes", i)))
+    check_caps(files)
     return files
+
+
+def check_caps(files):
+    """Refuses a path listed twice and files beyond the caps, each counted at the most it may fetch."""
+    seen = set()
+    for path, _, _ in files:
+        if path in seen:
+            raise Refused(path + " is listed twice")
+        seen.add(path)
+    if len(files) > MAX_FILES:
+        raise Refused("the catalog lists " + str(len(files)) + " files, more than the cap of " + str(MAX_FILES))
+    total = 0
+    for path, kind, expected in files:
+        size = fetch_limit(kind, expected)
+        if size > MAX_FILE:
+            raise Refused(path + " exceeds the cap of " + str(MAX_FILE) + " bytes")
+        total += size
+    if total > MAX_TOTAL:
+        raise Refused("the catalog's files exceed the cap of " + str(MAX_TOTAL) + " bytes in total")
 
 
 def deltas(where, variant, count):
     """For each of count APKs, (source version, size, SHA-256) of its deltas, read as Repo.kt reads them."""
     sources = variant.get("availableDeltaVersions", [])
     columns = [variant.get(c, []) for c in ("apkDeltaSizes", "apkDeltaHashes", "apkDeltaSrcHashes")]
-    if any(len(column) != len(sources) * count for column in columns):
+    if (not all(isinstance(c, list) for c in [sources] + columns)
+            or any(len(column) != len(sources) * count for column in columns)):
         raise Refused(where + ": unexpected delta list")
     found = [[] for _ in range(count)]
     for at, (size, digest, source_digest) in enumerate(zip(*columns)):
@@ -298,15 +367,19 @@ def mirror_file(root, path, kind, expected, verified, new_catalog, staged):
     return fetch_file(target, path, kind, expected, verified, key)
 
 
+def fetch_limit(kind, expected):
+    """The most bytes fetched for a file: its size in the catalog, or the limit where it gives none."""
+    return {"apk": lambda: expected[2], "br": lambda: expected[0], "ina": lambda: expected[0],
+            "idsig": lambda: min(expected[0], MAX_IDSIG) if expected else MAX_IDSIG,
+            "icon": lambda: min(expected[1], MAX_ICON) if len(expected) > 1 else MAX_ICON}[kind]()
+
+
 def fetch_file(target, path, kind, expected, verified, key):
     os.makedirs(os.path.dirname(target), exist_ok=True)
     tmp = target + ".tmp"
-    limit = {"apk": lambda: expected[2], "br": lambda: expected[0], "ina": lambda: expected[0],
-             "idsig": lambda: min(expected[0], MAX_IDSIG) if expected else MAX_IDSIG,
-             "icon": lambda: min(expected[1], MAX_ICON) if len(expected) > 1 else MAX_ICON}[kind]()
     try:
         with open(tmp, "wb") as out:
-            loaded = fetch(path, limit, out)
+            loaded = fetch(path, fetch_limit(kind, expected), out)
             out.flush()
             os.fsync(out.fileno())
         check(tmp, kind, expected)
@@ -366,6 +439,12 @@ def mirror(root, state):
 
 def locked_mirror(root, state):
     published = os.path.join(root, CATALOG)
+    # The newest catalog time ever published, and until when each file of a replaced catalog stays.
+    remembered_path = os.path.join(state, "catalogs.json")
+    remembered = {"floor": 0, "kept": {}}
+    if os.path.isfile(remembered_path):
+        with open(remembered_path) as f:
+            remembered = json.load(f)
     data = fetch(CATALOG, MAX_CATALOG)
     catalog = verify_catalog(data, os.path.join(state, "upstream"))
     previous = None
@@ -373,16 +452,25 @@ def locked_mirror(root, state):
         with open(published, "rb") as f:
             old = f.read()
         previous = verify_catalog(old, os.path.join(state, "upstream"))
+        # A host without a floor yet takes the published catalog's time.
+        if previous["time"] > remembered["floor"]:
+            remembered["floor"] = previous["time"]
+            write_json(remembered_path, remembered)
         if catalog["time"] < previous["time"]:
             raise Refused("GrapheneOS's catalog is older than the published one")
+    if catalog["time"] < remembered["floor"]:
+        raise Refused("GrapheneOS's catalog is older than one published before (" + str(remembered["floor"]) + ")")
     files = needed_files(catalog)
+    new_catalog = previous is None or data != old
+    current = {path for path, _, _ in files}
+    replaced = [] if not new_catalog or previous is None else [
+        path for path, _, _ in needed_files(previous) if path not in current]
     verified_path = os.path.join(state, "verified.json")
     verified = {}
     if os.path.isfile(verified_path):
         with open(verified_path) as f:
             verified = json.load(f)
     loaded = 0
-    new_catalog = previous is None or data != old
     staged = []
     try:
         for path, kind, expected in files:
@@ -390,6 +478,11 @@ def locked_mirror(root, state):
     finally:
         write_json(verified_path, verified)
     if new_catalog:
+        until = now() + KEEP_REPLACED
+        for path in replaced:
+            remembered["kept"][path] = max(until, remembered["kept"].get(path, 0))
+        remembered["floor"] = max(remembered["floor"], catalog["time"])
+        write_json(remembered_path, remembered)
         with open(published + ".tmp", "wb") as f:
             f.write(data)
             f.flush()
@@ -397,18 +490,24 @@ def locked_mirror(root, state):
         os.replace(published + ".tmp", published)
     for target in staged:
         os.replace(target + ".new", target)
-    keep = {path for path, _, _ in files} | {CATALOG}
-    if previous is not None:
-        keep |= {path for path, _, _ in needed_files(previous)}
+    moment = now()
+    remembered["kept"] = {path: until for path, until in remembered["kept"].items() if until > moment}
+    keep = current | set(remembered["kept"]) | {CATALOG}
     removed = prune(root, keep)
     for path in list(verified):
         if path not in keep:
             del verified[path]
     write_json(verified_path, verified)
+    write_json(remembered_path, remembered)
     print("published GrapheneOS catalog " + str(catalog["time"]) + ": " + str(len(files)) + " files, "
-          + str(loaded // 1000000) + " MB fetched, " + str(removed) + " removed")
+          + str(loaded // 1000000) + " MB fetched, " + str(removed) + " removed, "
+          + str(len(set(remembered["kept"]) - current)) + " kept from replaced catalogs")
     for note in changes(previous, catalog):
         print("GrapheneOS's catalog: " + note)
+    age = moment - catalog["time"]
+    if age > MAX_AGE:
+        raise Stale("GrapheneOS's catalog " + str(catalog["time"]) + " is " + str(age // 86400)
+                    + " days old, more than " + str(MAX_AGE // 86400))
 
 
 if __name__ == "__main__":
@@ -419,3 +518,6 @@ if __name__ == "__main__":
     except Refused as e:
         print("refused: " + str(e), file=sys.stderr)
         sys.exit(2)
+    except Stale as e:
+        print("alert: " + str(e) + ". It is still served.", file=sys.stderr)
+        sys.exit(3)

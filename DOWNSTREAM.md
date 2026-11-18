@@ -16,4 +16,6 @@
 - Publication keeps the package versions that current and previous signed catalogs list. Serving roots hold verified files and signed metadata, never private keys.
 - `deploy-static` calls the protected executable named by `DIAMANEOS_PUBLICATION_TRANSPORT`, which handles authentication, targets and remote installation.
 - The Debian deployment entry point is [DiamaneOS/infrastructure](https://github.com/DiamaneOS/infrastructure/tree/main/debian).
+- The GrapheneOS mirror refuses a catalog older than the newest one it published, a path listed twice and a catalog over its caps (20,000 files, 512 MiB a file, 20 GiB in total).
+- The GrapheneOS mirror keeps a replaced catalog's files for 24 hours and fails its run when GrapheneOS's catalog is more than 30 days old.
 - The GrapheneOS mirror runs as its own account (`diamaneos-apps-mirror`). It may write only its served directory and its state, and reaches only apps.grapheneos.org. Nginx serves the directory read-only as `/grapheneos/`.
