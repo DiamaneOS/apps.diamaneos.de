@@ -589,6 +589,30 @@ class MirrorTests(unittest.TestCase):
         self.run_mirror()
         self.assertIn('packages/app.vanadium.browser/icon.webp', self.files())
 
+    def test_failed_run_keeps_the_icons_of_the_published_catalog(self):
+        self.standard()
+        package = self.upstream.packages['app.vanadium.browser']
+        package.update(iconSize=len(webp()), iconSha256=hashlib.sha256(webp()).hexdigest())
+        first = self.upstream.catalog()
+        self.run_mirror()
+        icon = self.root / 'packages/app.vanadium.browser/icon.webp'
+        new_icon = webp() + b'new'
+        self.upstream.files['packages/app.vanadium.browser/icon.webp'] = new_icon
+        package.update(iconSize=len(new_icon), iconSha256=hashlib.sha256(new_icon).hexdigest())
+        self.upstream.time += 10
+        self.upstream.apk('com.google.android.gms', 6, b'gms new', v4=False)
+        self.upstream.catalog()
+        self.upstream.files['packages/com.google.android.gms/6/base.apk.gz'] = gzip.compress(b'gms bad', mtime=0)
+        with self.assertRaises(self.mirror.Refused):
+            self.run_mirror()
+        # The published catalog still lists the old icon.
+        self.assertEqual((self.root / 'metadata.1.0.sjson').read_bytes(), first)
+        self.assertEqual(icon.read_bytes(), webp())
+        self.upstream.files['packages/com.google.android.gms/6/base.apk.gz'] = gzip.compress(b'gms new', mtime=0)
+        self.run_mirror()
+        self.assertEqual(icon.read_bytes(), new_icon)
+        self.assertFalse([f for f in self.files() if f.endswith(('.new', '.tmp'))])
+
     def test_apk_sizes_must_be_whole_numbers(self):
         for column, value in (('apkGzSizes', '20'), ('apkGzSizes', 1.5), ('apkGzSizes', True), ('apkSizes', -1),
                               ('apkBrSizes', 0), ('apkBrSizes', None), ('apkSizes', [3])):

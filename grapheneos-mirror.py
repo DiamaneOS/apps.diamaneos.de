@@ -13,7 +13,7 @@ ROOT is the served grapheneos/ directory and STATE the job's own state. It needs
    the catalog's size and SHA-256, and so must each .ina (a delta from an older version) with a size
    above 0. v4 signatures and icons are checked against the catalog's size and SHA-256 where it lists
    them, and their format always. Icons are fetched again only with a new catalog, and a failed icon
-   keeps the previous one.
+   keeps the previous one. A new icon replaces the published one only after the new catalog.
 3. Only then publishes the catalog bytes unchanged. Files neither this nor the previous catalog lists
    are removed. Packages added, dropped or with other signers than in the previous catalog are logged.
 """
@@ -273,7 +273,7 @@ def check(path, kind, expected):
         check_icon(path, expected[0])
 
 
-def mirror_file(root, path, kind, expected, verified, new_catalog):
+def mirror_file(root, path, kind, expected, verified, new_catalog, staged):
     """Fetches and checks one file unless it is already in place. Returns the bytes fetched."""
     target = os.path.join(root, path)
     key = [kind, list(expected)]
@@ -281,7 +281,10 @@ def mirror_file(root, path, kind, expected, verified, new_catalog):
         if os.path.isfile(target) and not new_catalog:
             return 0
         try:
-            return fetch_file(target, path, kind, expected, verified, key)
+            # The published catalog may list the icon at this path, so it is replaced after the catalog.
+            loaded = fetch_file(target + ".new", path, kind, expected, verified, key)
+            staged.append(target)
+            return loaded
         except (Refused, OSError, http.client.HTTPException) as e:
             print("icon kept as it was: " + path + " (" + str(e) + ")")
             return 0
@@ -380,9 +383,10 @@ def locked_mirror(root, state):
             verified = json.load(f)
     loaded = 0
     new_catalog = previous is None or data != old
+    staged = []
     try:
         for path, kind, expected in files:
-            loaded += mirror_file(root, path, kind, expected, verified, new_catalog)
+            loaded += mirror_file(root, path, kind, expected, verified, new_catalog, staged)
     finally:
         write_json(verified_path, verified)
     if new_catalog:
@@ -391,6 +395,8 @@ def locked_mirror(root, state):
             f.flush()
             os.fsync(f.fileno())
         os.replace(published + ".tmp", published)
+    for target in staged:
+        os.replace(target + ".new", target)
     keep = {path for path, _, _ in files} | {CATALOG}
     if previous is not None:
         keep |= {path for path, _, _ in needed_files(previous)}

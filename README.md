@@ -23,7 +23,7 @@ The scripts need signify, apksigner and aapt2 from build tools 37 (generate.py r
 
 `grapheneos-mirror.py ROOT STATE` runs on each server from `systemd/diamaneos-grapheneos-mirror.timer`, without any key. It fetches GrapheneOS's catalog and checks its signature (`grapheneos-apps.0.pub`) and that it is not older than the published one. It then fetches every APK the App Store may take from it for arm64-v8a and checks each against the catalog's sizes and SHA-256, and only then publishes the catalog bytes. Files that neither the current nor the previous catalog lists are removed.
 
-Icons are not in the signed catalog. They are fetched again only with a new catalog, and a failed icon keeps the previous one. Packages GrapheneOS adds or drops, or signs with other keys, are logged and published anyway, as GrapheneOS's key is trusted for them. A failed run leaves the unit failed and the published catalog as it was.
+Icons are not in the signed catalog. They are fetched again only with a new catalog, and a failed icon keeps the previous one. Packages GrapheneOS adds or drops, or signs with other keys, are logged and published anyway, as GrapheneOS's key is trusted for them. A new icon replaces the published one only after the new catalog. A failed run leaves the unit failed and the published catalog and its icons as they were.
 
 Run the tests with `python3 -m unittest discover -s tests` (Python 3.11 or newer). One test compares the package sets with Catalogs.kt in an AppStore checkout next to this one, or at `APPSTORE_SOURCE`.
 
