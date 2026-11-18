@@ -6,6 +6,7 @@
 - `generate.py` also reads a label written in the manifest (aapt2 prints it only in its `application:` line), as the App Store needs a label in each version.
 - `generate.py` keeps no cache files for the signer and aapt2's output, so every run checks each APK's signer against the inventory.
 - `generate.py` hashes each APK, its .br and its v4 signature on every run, lists the hash of the APK whose signer it checked, and stops when a kept `.sha256` file differs.
+- `generate.py` checks with conditions that stop the run, not `assert`, which `python3 -O` drops.
 - `generate.py` makes no deltas unless `DIAMANEOS_DELTAS=1`, which needs the `ina` tool.
 - `generate.py` makes no delta from a version that cannot apply one (`NO_DELTA_SOURCES`): App Store 3701.
 - `compress-apks` and `process-static` stop when brotli or zopfli fails, so no empty compressed file is listed or served.

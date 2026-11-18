@@ -23,7 +23,7 @@ from os import path
 from pathlib import Path
 
 def main():
-    assert subprocess.call("./compress-apks") == 0
+    require(subprocess.call("./compress-apks") == 0, "compress-apks failed")
 
     packages_dir = "apps/packages"
     packages = {}
@@ -116,6 +116,11 @@ def main():
             f.write("\n" + sig + "\n")
 
         key_version += 1
+
+# DiamaneOS: a check that stops the run. python -O drops assert statements, not this.
+def require(condition, message):
+    if not condition:
+        raise Exception(message)
 
 SINGLE_THREAD = os.getenv("SINGLE_THREAD", "0") == "1"
 # DiamaneOS: deltas need the ina tool, so they are off unless asked for.
@@ -267,7 +272,7 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
                  "apkSizes": [], "apkGzSizes": [], "apkBrSizes": [], "apkBrHashes": []}
 
     base_apk_path = path.join(pkg_path, "base.apk")
-    assert path.isfile(base_apk_path), base_apk_path
+    require(path.isfile(base_apk_path), "no base.apk in " + pkg_path)
 
     base_apk_signature = load_cert_digest(base_apk_path)
     if (base_apk_signature not in pkg_signatures):
@@ -286,9 +291,9 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
         if kv.startswith("versionName"):
             pkg_props["versionName"] = kv.split("=")[1]
         elif kv.startswith("versionCode"):
-            assert pkg_props["versionCode"] == int(kv.split("=")[1]), base_apk_path
+            require(pkg_props["versionCode"] == int(kv.split("=")[1]), base_apk_path + ": versionCode is not its directory's")
         elif kv.startswith("name"):
-            assert pkg_name == kv.split("=")[1], base_apk_path
+            require(pkg_name == kv.split("=")[1], base_apk_path + ": package name is not its directory's")
 
     pkg_abis = set()
 
@@ -306,16 +311,16 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
         elif kv[0].startswith("native-code"):
             abis = kv[1:]
             for abi in abis:
-                assert abi in all_abis, base_apk_path
-            assert len(pkg_abis) == 0, base_apk_path
+                require(abi in all_abis, base_apk_path + ": unknown ABI " + abi)
+            require(len(pkg_abis) == 0, base_apk_path + ": native-code listed twice")
             pkg_abis.update(abis)
         elif kv[0].startswith("alt-native-code"):
             abis = kv[1:]
             for abi in abis:
-                assert abi in all_abis, base_apk_path
+                require(abi in all_abis, base_apk_path + ": unknown ABI " + abi)
                 pkg_abis.add(abi)
 
-    assert pkg_props.get("minSdk") != None, pkg_path
+    require(pkg_props.get("minSdk") != None, pkg_path + ": no minSdkVersion")
 
     for key,value in load_props(pkg_path, "channel").items():
         pkg_props[key] = value
@@ -323,7 +328,7 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
     for key,value in load_props(pkg_path, "props").items():
         pkg_props[key] = value
 
-    assert pkg_props["channel"] in ["alpha", "beta", "stable", "old"], pkg_path
+    require(pkg_props.get("channel") in ["alpha", "beta", "stable", "old"], pkg_path + ": no known channel")
 
     has_v4_sigs = None
 
@@ -333,8 +338,8 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
         apk_gz_path = apk_path + ".gz"
         apk_br_path = apk_path + ".br"
 
-        assert path.getmtime(apk_path) == path.getmtime(apk_gz_path), apk_path
-        assert path.getmtime(apk_path) == path.getmtime(apk_br_path), apk_path
+        require(path.getmtime(apk_path) == path.getmtime(apk_gz_path), apk_gz_path + ": not made from this APK")
+        require(path.getmtime(apk_path) == path.getmtime(apk_br_path), apk_br_path + ": not made from this APK")
 
         apk_idsig_path = apk_path + ".idsig"
         if path.isfile(apk_idsig_path):
@@ -362,12 +367,12 @@ def process_pkg_version(base_path, pkg_name, pkg_signatures, pkg_version):
         apk_version_code = None
         for kv in shlex.split(lines[0]):
             if kv.startswith("versionCode"):
-                assert apk_version_code == None, apk_path
+                require(apk_version_code == None, apk_path + ": versionCode listed twice")
                 apk_version_code = int(kv.split("=")[1])
             elif kv.startswith("name"):
-                assert pkg_name == kv.split("=")[1], apk_path
+                require(pkg_name == kv.split("=")[1], apk_path + ": package name is not its directory's")
         # all apk splits must have the same version code
-        assert pkg_props["versionCode"] == apk_version_code, apk_path
+        require(pkg_props["versionCode"] == apk_version_code, apk_path + ": versionCode is not the base APK's")
         if file_sha256(apk_path) != apk_hash:
             raise Exception(apk_path + " changed while it was checked")
 
