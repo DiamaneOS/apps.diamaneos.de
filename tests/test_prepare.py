@@ -1,6 +1,8 @@
 """prepare.py: our catalog's work tree holds only our packages, and --check refuses anything else."""
 import base64
+import contextlib
 import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -53,11 +55,11 @@ class PrepareTests(unittest.TestCase):
         self.assertTrue((self.work / 'apps/packages/app.grapheneos.camera/9304').is_dir())
         self.assertTrue((self.work / 'generate.py').is_file())
 
-    def write(self, packages, secret=t.SECRET, time=1_792_600_000):
+    def write(self, packages, secret=t.SECRET, time=1_792_600_000, path='apps/metadata.1.0.sjson'):
         (self.work / 'apps').mkdir(exist_ok=True)
         body = json.dumps({'time': time, 'packages': packages}).encode()
         signature = base64.b64encode(b'Ed' + t.KEYNUM + t.ed25519.sign(secret, body))
-        (self.work / 'apps/metadata.1.0.sjson').write_bytes(body + b'\n' + signature + b'\n')
+        (self.work / path).write_bytes(body + b'\n' + signature + b'\n')
         # The unsigned copy is not what phones read.
         (self.work / 'apps/metadata.1.json').write_text(json.dumps({'time': 1, 'packages': self.ours()}))
 
@@ -100,17 +102,17 @@ class PrepareTests(unittest.TestCase):
                 icon.write_bytes(icon.read_bytes()[:12] + bytes(1024 * 1024))
             self.write(packages)
             with self.assertRaises(SystemExit, msg=change):
-                self.prepare.check(str(self.work), str(self.key))
+                self.prepare.check(str(self.work), str(self.key), None)
         # An app not on the main screen needs none.
         self.copy_icons()
         packages = self.ours()
         self.assertNotIn('iconType', packages['de.diamaneos.camera.processor'])
         self.write(packages)
-        self.prepare.check(str(self.work), str(self.key))
+        self.prepare.check(str(self.work), str(self.key), None)
 
     def test_check_accepts_our_catalog(self):
         self.write(self.ours())
-        self.prepare.check(str(self.work), str(self.key))
+        self.prepare.check(str(self.work), str(self.key), None)
 
     def test_camera_and_its_processor_stay_linked(self):
         # Camera takes a newer CameraProcessor in its install, both in one group, CameraProcessor names nothing.
@@ -135,12 +137,12 @@ class PrepareTests(unittest.TestCase):
             change(packages[name])
             self.write(packages)
             with self.assertRaises(SystemExit, msg=name):
-                self.prepare.check(str(self.work), str(self.key))
+                self.prepare.check(str(self.work), str(self.key), None)
         packages = self.ours()
         del packages['de.diamaneos.camera.processor']
         self.write(packages)
         with self.assertRaises(SystemExit):
-            self.prepare.check(str(self.work), str(self.key))
+            self.prepare.check(str(self.work), str(self.key), None)
 
     def test_check_requires_a_label_in_each_version(self):
         version = {'apks': ['base.apk'], 'label': 'Camera processing'}
@@ -152,17 +154,17 @@ class PrepareTests(unittest.TestCase):
                 del packages['de.diamaneos.camera.processor']['variants']['1']['label']
             self.write(packages)
             with self.assertRaises(SystemExit, msg=repr(label)):
-                self.prepare.check(str(self.work), str(self.key))
+                self.prepare.check(str(self.work), str(self.key), None)
         packages['de.diamaneos.camera.processor']['variants'] = {'1': version}
         self.write(packages)
-        self.prepare.check(str(self.work), str(self.key))
+        self.prepare.check(str(self.work), str(self.key), None)
 
     def test_check_refuses_a_catalog_older_than_the_app_stores_floor(self):
         self.write(self.ours(), time=self.prepare.MIN_TIME - 1)
         with self.assertRaises(SystemExit):
-            self.prepare.check(str(self.work), str(self.key))
+            self.prepare.check(str(self.work), str(self.key), None)
         self.write(self.ours(), time=self.prepare.MIN_TIME)
-        self.prepare.check(str(self.work), str(self.key))
+        self.prepare.check(str(self.work), str(self.key), None)
 
     def test_check_uses_only_signify_openbsd(self):
         self.assertEqual(load().SIGNIFY, '/usr/bin/signify-openbsd')
@@ -170,7 +172,105 @@ class PrepareTests(unittest.TestCase):
     def test_check_refuses_a_catalog_signed_by_another_key(self):
         self.write(self.ours(), secret=b'\x01' * 32)
         with self.assertRaises(SystemExit):
-            self.prepare.check(str(self.work), str(self.key))
+            self.prepare.check(str(self.work), str(self.key), None)
+
+    # The published catalog: App Store and CameraProcessor in stable, Camera in stable and beta.
+    PUBLISHED = {'app.grapheneos.apps': {'3705': 'stable'},
+                 'app.grapheneos.camera': {'9310': 'stable', '9311': 'beta'},
+                 'de.diamaneos.camera.processor': {'2': 'stable'}}
+
+    def versions(self, versions, drop=()):
+        """Our catalog with these versions and channels (None: no channel field), without the packages in drop."""
+        packages = self.ours()
+        for name, codes in versions.items():
+            packages[name]['variants'] = {code: {'apks': ['base.apk'], 'label': 'An app', **({'channel': c} if c else {})}
+                                          for code, c in codes.items()}
+        for name in drop:
+            del packages[name]
+        return packages
+
+    def against_published(self, versions, drop=(), time=1_792_700_000, allowed=(), published_secret=t.SECRET, published=None):
+        """--check of a catalog with these versions against the published one."""
+        self.write(self.versions(published or self.PUBLISHED), secret=published_secret, time=1_792_650_000, path='published.sjson')
+        self.write(self.versions(versions, drop), time=time)
+        self.prepare.check(str(self.work), str(self.key), str(self.work / 'published.sjson'), allowed)
+
+    def refused(self, problem, *args, **kwargs):
+        """The check refuses it and names the problem."""
+        out = io.StringIO()
+        with self.assertRaises(SystemExit, msg=problem) as refusal, contextlib.redirect_stdout(out):
+            self.against_published(*args, **kwargs)
+        self.assertIn(problem, out.getvalue() + str(refusal.exception.code))
+
+    def test_check_accepts_a_catalog_newer_than_the_published_one(self):
+        self.against_published(self.PUBLISHED)
+        # Newer versions, a new channel and a new package are fine.
+        self.against_published(dict(self.PUBLISHED, **{'app.grapheneos.camera': {'9312': 'stable', '9313': 'beta'},
+                                                       'app.grapheneos.apps': {'3705': 'stable', '3706': 'alpha'},
+                                                       'de.diamaneos.auditor': {'9203': 'stable'}}))
+
+    def test_check_refuses_a_catalog_not_newer_than_the_published_one(self):
+        for time in (1_792_650_000, 1_792_649_999):
+            self.refused("the catalog's time is not after the published catalog's 1792650000", self.PUBLISHED, time=time)
+
+    def test_check_refuses_a_dropped_package_unless_allowed(self):
+        drop = ['app.grapheneos.apps']
+        self.refused('app.grapheneos.apps: in the published catalog, missing from this one', self.PUBLISHED, drop)
+        self.refused('app.grapheneos.apps: in the published catalog', self.PUBLISHED, drop, allowed=['app.grapheneos.apps:stable'])
+        self.against_published(self.PUBLISHED, drop, allowed=['app.grapheneos.apps'])
+        # Listed without any version is gone too.
+        self.refused('app.grapheneos.apps: in the published catalog', dict(self.PUBLISHED, **{'app.grapheneos.apps': {}}))
+
+    def test_check_takes_a_promotion_that_drops_the_less_stable_entry(self):
+        # Beta 9311 promoted to stable: beta and alpha phones get it as the stable version.
+        self.against_published(dict(self.PUBLISHED, **{'app.grapheneos.camera': {'9311': 'stable'}}))
+        self.against_published(dict(self.PUBLISHED, **{'app.grapheneos.camera': {'9311': None}}))
+        # A staged release, alpha to beta to stable, each step against the one before.
+        alpha = dict(self.PUBLISHED, **{'app.grapheneos.camera': {'9311': 'stable', '9312': 'alpha'}})
+        beta = dict(self.PUBLISHED, **{'app.grapheneos.camera': {'9311': 'stable', '9312': 'beta'}})
+        self.against_published(beta, published=alpha)
+        self.against_published(dict(self.PUBLISHED, **{'app.grapheneos.camera': {'9312': 'stable'}}), published=beta)
+
+    def test_check_refuses_a_lower_beta_while_stable_stays_unless_allowed(self):
+        # Beta 9311 dropped without a promotion: beta phones, and alpha phones with them, go back to stable 9310.
+        versions = dict(self.PUBLISHED, **{'app.grapheneos.camera': {'9310': 'stable'}})
+        self.refused('app.grapheneos.camera:beta: a phone on beta gets 9310, below the published 9311', versions)
+        self.refused('app.grapheneos.camera:alpha: a phone on alpha gets 9310', versions, allowed=['app.grapheneos.camera:beta'])
+        self.refused('app.grapheneos.camera:beta: a phone on beta', versions, allowed=['app.grapheneos.camera'])
+        self.against_published(versions, allowed=['app.grapheneos.camera:alpha', 'app.grapheneos.camera:beta'])
+        # A lower beta version beside the same stable one.
+        versions = dict(self.PUBLISHED, **{'app.grapheneos.camera': {'9310': 'stable', '9305': 'beta'}})
+        self.refused('app.grapheneos.camera:beta: a phone on beta gets 9305, below the published 9311', versions)
+
+    def test_check_refuses_a_lower_version_code_unless_allowed(self):
+        versions = dict(self.PUBLISHED, **{'app.grapheneos.camera': {'9309': 'stable', '9312': 'beta'}})
+        self.refused('app.grapheneos.camera:stable: a phone on stable gets 9309, below the published 9310', versions)
+        self.refused('app.grapheneos.camera:stable: a phone on stable gets 9309', versions, allowed=['app.grapheneos.apps:stable'])
+        self.against_published(versions, allowed=['app.grapheneos.camera:stable'])
+
+    def test_check_refuses_an_allow_drop_it_does_not_use(self):
+        for name in ('de.diamaneos.auditor', 'app.grapheneos.camera:beta', 'app.grapheneos.camera:old', 'app.vanadium.browser'):
+            self.refused('--allow-drop ' + name + ': the catalog keeps it', self.PUBLISHED, allowed=[name])
+
+    def test_check_refuses_a_published_catalog_signed_by_another_key(self):
+        self.refused('published.sjson does not verify with', self.PUBLISHED, published_secret=b'\x01' * 32)
+
+    def test_check_needs_the_published_catalog_or_first(self):
+        self.write(self.versions(self.PUBLISHED), time=1_792_650_000, path='published.sjson')
+        self.write(self.versions(self.PUBLISHED), time=1_792_700_000)
+        work, key, published = str(self.work), str(self.key), str(self.work / 'published.sjson')
+        for args in ([work, key], ['--first', work, key, published], ['--first', work, key, '--allow-drop', 'app.grapheneos.apps'],
+                     [work, key, published, '--allow-drop'], [work, key, published, '--allow-drop', '--first'],
+                     [work, key, published, '--other']):
+            with self.assertRaises(SystemExit, msg=str(args)) as refusal:
+                self.prepare.main(['--check'] + args)
+            self.assertEqual(refusal.exception.code, self.prepare.__doc__)
+        self.prepare.main(['--check', '--first', work, key])
+        self.prepare.main(['--check', work, key, published])
+        self.write(self.versions(self.PUBLISHED, drop=['app.grapheneos.apps']), time=1_792_700_000)
+        with self.assertRaises(SystemExit):
+            self.prepare.main(['--check', work, key, published])
+        self.prepare.main(['--check', work, key, published, '--allow-drop', 'app.grapheneos.apps'])
 
     def test_inventory_refuses_other_signers_and_grapheneos_apps(self):
         self.prepare.REPO = str(self.work / 'repo')
@@ -239,39 +339,39 @@ class PrepareTests(unittest.TestCase):
             packages['com.fps.camera']['variants'] = {'801000114': dict(version, **({} if features is None else {'features': features}))}
             self.write(packages)
             with self.assertRaises(SystemExit, msg=str(features)):
-                self.prepare.check(str(self.work), str(self.key))
+                self.prepare.check(str(self.work), str(self.key), None)
         for features in ([generic, apk], [apk, generic]):
             packages = self.ours()
             packages['com.fps.camera']['variants'] = {'801000114': dict(version, features=features)}
             self.write(packages)
-            self.prepare.check(str(self.work), str(self.key))
+            self.prepare.check(str(self.work), str(self.key), None)
         # Every version is checked against its own APK, and two versions stay side by side.
         packages = self.ours()
         packages['com.fps.camera']['variants'] = {'801000114': dict(version, features=[generic, apk]),
                                                   '801000115': dict(version, features=[generic, apk])}
         self.write(packages)
         with self.assertRaises(SystemExit):
-            self.prepare.check(str(self.work), str(self.key))
+            self.prepare.check(str(self.work), str(self.key), None)
         packages['com.fps.camera']['variants']['801000115'] = dict(version, features=[generic, named['801000115']])
         self.write(packages)
-        self.prepare.check(str(self.work), str(self.key))
+        self.prepare.check(str(self.work), str(self.key), None)
         # The check hashes the APK in the tree itself: another file under the same name, or none, is refused.
         (self.work / 'apps/packages/com.fps.camera/801000115/base.apk').write_bytes(b'another file')
         with self.assertRaises(SystemExit):
-            self.prepare.check(str(self.work), str(self.key))
+            self.prepare.check(str(self.work), str(self.key), None)
         (self.work / 'apps/packages/com.fps.camera/801000115/base.apk').unlink()
         with self.assertRaises(SystemExit):
-            self.prepare.check(str(self.work), str(self.key))
+            self.prepare.check(str(self.work), str(self.key), None)
         # The catalog's own hash of the version must be that APK's.
         del packages['com.fps.camera']['variants']['801000115']
         for hashes, accepted in (([hashlib.sha256(apks['801000114']).hexdigest()], True), (['0' * 64], False), ([], False)):
             packages['com.fps.camera']['variants']['801000114'] = dict(version, features=[generic, apk], apkHashes=hashes)
             self.write(packages)
             if accepted:
-                self.prepare.check(str(self.work), str(self.key))
+                self.prepare.check(str(self.work), str(self.key), None)
             else:
                 with self.assertRaises(SystemExit, msg=str(hashes)):
-                    self.prepare.check(str(self.work), str(self.key))
+                    self.prepare.check(str(self.work), str(self.key), None)
 
     def test_label_is_replaced_for_a_pinned_app_only(self):
         self.assertEqual(self.prepare.load_inventory()['com.fps.camera']['label'], 'Fairphone Camera')
@@ -308,22 +408,22 @@ class PrepareTests(unittest.TestCase):
         packages = self.ours()
         packages['com.fps.camera']['variants'] = versions
         self.write(packages)
-        self.prepare.check(str(self.work), str(self.key))
+        self.prepare.check(str(self.work), str(self.key), None)
         for label in ('Camera', 'fairphone camera', 'Fairphone Camera '):
             packages['com.fps.camera']['variants'] = dict(versions, **{'801000115': dict(versions['801000115'], label=label)})
             self.write(packages)
             with self.assertRaises(SystemExit, msg=label):
-                self.prepare.check(str(self.work), str(self.key))
+                self.prepare.check(str(self.work), str(self.key), None)
         packages['com.fps.camera']['variants'] = versions
         packages['com.fps.camera']['label'] = 'Fairphone Camera'
         self.write(packages)
         with self.assertRaises(SystemExit):
-            self.prepare.check(str(self.work), str(self.key))
+            self.prepare.check(str(self.work), str(self.key), None)
         del packages['com.fps.camera']['label']
         packages['app.grapheneos.camera']['label'] = 'Camera'
         self.write(packages)
         with self.assertRaises(SystemExit):
-            self.prepare.check(str(self.work), str(self.key))
+            self.prepare.check(str(self.work), str(self.key), None)
 
     def test_check_refuses_other_packages_and_signers(self):
         for change in ('other', 'signer', 'source', 'renamed', 'split'):
@@ -340,7 +440,7 @@ class PrepareTests(unittest.TestCase):
                 packages['app.grapheneos.apps']['originalPackage'] = 'org.example'
             self.write(packages)
             with self.assertRaises(SystemExit, msg=change):
-                self.prepare.check(str(self.work), str(self.key))
+                self.prepare.check(str(self.work), str(self.key), None)
 
 
 if __name__ == '__main__':

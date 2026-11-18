@@ -2,9 +2,15 @@
 """Prepare and check the work tree of our catalog. It lists only apps signed with our keys.
 
 ./prepare.py WORK                  copy the inventory, scripts and static files into WORK
-./prepare.py --check WORK KEY.pub  after generate.py: the signed catalog verifies with apps.0's public
+./prepare.py --check WORK KEY.pub PUBLISHED [--allow-drop PACKAGE[:CHANNEL]]...
+                                   after generate.py: the signed catalog verifies with apps.0's public
                                    key and lists only the inventory, with its signers, single APKs, a
-                                   label in each version and an icon for each app on the main screen
+                                   label in each version and an icon for each app on the main screen.
+                                   It is newer than PUBLISHED, our signed catalog as served, keeps its
+                                   packages and offers each channel no lower version than it, unless
+                                   --allow-drop names the package or PACKAGE:CHANNEL
+./prepare.py --check --first WORK KEY.pub
+                                   the same for a first release, which has no published catalog
 
 The inventory is apps/packages/*/common-props.toml. GrapheneOS's apps are not in our catalog: the App
 Store reads GrapheneOS's own catalog for them, mirrored by grapheneos-mirror.py, and refuses our
@@ -64,6 +70,8 @@ LINKED = {
 EXCLUDED = {"app.grapheneos.info", "app.attestation.auditor"}
 # The App Store reads at most 1 MiB of an icon (DownloadIconLoader.kt).
 MAX_ICON = 1024 * 1024
+# Release channels from least to most stable (ReleaseChannel in Repo.kt). A version without one is stable.
+CHANNELS = ["alpha", "beta", "stable"]
 
 
 def load_inventory():
@@ -134,12 +142,12 @@ def prepare(work):
     print("prepared " + str(len(inventory)) + " packages: " + ", ".join(sorted(inventory)))
 
 
-def signed_catalog(work, key):
+def signed_catalog(path, key):
     """The JSON of the catalog the App Store reads, after its signature check with key."""
-    with open(os.path.join(work, CATALOG), "rb") as f:
+    with open(path, "rb") as f:
         data = f.read()
     if len(data) < 103 or data[-102:-101] != b"\n" or data[-1:] != b"\n":
-        sys.exit("malformed signed catalog")
+        sys.exit("malformed signed catalog " + path)
     with tempfile.TemporaryDirectory() as tmp:
         message, signature = os.path.join(tmp, "metadata.json"), os.path.join(tmp, "metadata.json.sig")
         with open(message, "wb") as f:
@@ -147,7 +155,7 @@ def signed_catalog(work, key):
         with open(signature, "wb") as f:
             f.write(b"untrusted comment: signature from the DiamaneOS app catalog key\n" + data[-101:])
         if subprocess.run([SIGNIFY, "-V", "-q", "-p", key, "-m", message, "-x", signature]).returncode != 0:
-            sys.exit("the signed catalog does not verify with " + key)
+            sys.exit(path + " does not verify with " + key)
     return json.loads(data[:-102])
 
 
@@ -166,14 +174,66 @@ def icon_problem(work, name, package):
     return None
 
 
-def check(work, key):
+def offered(package):
+    """The version code a phone on each channel is offered, as the App Store picks it: the highest version of each
+    channel, then for channel C the least stable of them at C or more stable, else the most stable one (findRPackage
+    in Repo.kt). Empty when the package has no version. minSdk, ABIs, features and static dependencies are left out."""
+    best = {}
+    for code, variant in package.get("variants", {}).items():
+        channel = variant.get("channel", "stable") if isinstance(variant, dict) else None
+        if channel in CHANNELS:
+            best[channel] = max(best.get(channel, 0), int(code))
+    result = {}
+    for i, channel in enumerate(CHANNELS):
+        stabler = [best[c] for c in CHANNELS[i:] if c in best]
+        if stabler:
+            result[channel] = stabler[0]
+        elif best:
+            result[channel] = best[max(best, key=CHANNELS.index)]
+    return result
+
+
+def published_problems(catalog, published, allowed):
+    """The catalog is newer than the one we last published, keeps each of its packages and offers a phone on each
+    channel no lower version code. Only --allow-drop PACKAGE or PACKAGE:CHANNEL lets one go, and each one must be used."""
+    problems, used = [], set()
+    if not isinstance(published.get("time"), int) or not isinstance(catalog.get("time"), int) \
+            or catalog["time"] <= published["time"]:
+        problems.append("the catalog's time is not after the published catalog's " + str(published.get("time")))
+
+    def drop(name, problem):
+        if name in allowed:
+            used.add(name)
+        else:
+            problems.append(name + ": " + problem)
+
+    for name, package in sorted(published["packages"].items()):
+        before, now = offered(package), offered(catalog["packages"].get(name, {}))
+        if before and not now:
+            drop(name, "in the published catalog, missing from this one")
+            continue
+        for channel in before:
+            if now[channel] < before[channel]:
+                drop(name + ":" + channel, "a phone on " + channel + " gets " + str(now[channel])
+                     + ", below the published " + str(before[channel]))
+    problems += ["--allow-drop " + name + ": the catalog keeps it" for name in sorted(set(allowed) - used)]
+    return problems
+
+
+def check(work, key, published, allowed=()):
+    """published is the signed catalog apps.diamaneos.de serves, None only for a first release (--first)."""
     inventory = load_inventory()
-    catalog = signed_catalog(work, key)
+    catalog = signed_catalog(os.path.join(work, CATALOG), key)
+    last = None if published is None else signed_catalog(published, key)
     packages = catalog["packages"]
     problems = []
     # Catches a signing machine with a wrong clock.
     if not isinstance(catalog.get("time"), int) or catalog["time"] < MIN_TIME:
         problems.append("the catalog's time is before the App Store's floor " + str(MIN_TIME))
+    # Against the catalog phones read now: an older one would be refused, and a package left out or a channel
+    # set back by mistake stops its updates.
+    if last is not None:
+        problems += published_problems(catalog, last, set(allowed))
     for name, package in sorted(packages.items()):
         listed = inventory.get(name)
         if listed is None:
@@ -213,10 +273,24 @@ def check(work, key):
     print("our catalog lists only our signed packages and its pinned makers' apps: " + ", ".join(sorted(packages)))
 
 
+def main(args):
+    if args[:1] == ["--check"]:
+        first, allowed, paths, rest = "--first" in args, [], [], [a for a in args[1:] if a != "--first"]
+        while rest:
+            arg = rest.pop(0)
+            if arg == "--allow-drop" and rest:
+                allowed.append(rest.pop(0))
+            else:
+                paths.append(arg)
+        # The published catalog is left out only with --first, which takes no --allow-drop.
+        if len(paths) == (2 if first else 3) and not (first and allowed) \
+                and not any(a.startswith("-") for a in paths + allowed):
+            work, key, *published = map(os.path.abspath, paths)
+            return check(work, key, published[0] if published else None, allowed)
+    elif len(args) == 1 and not args[0].startswith("-"):
+        return prepare(os.path.abspath(args[0]))
+    sys.exit(__doc__)
+
+
 if __name__ == "__main__":
-    if len(sys.argv) == 4 and sys.argv[1] == "--check":
-        check(os.path.abspath(sys.argv[2]), os.path.abspath(sys.argv[3]))
-    elif len(sys.argv) == 2 and not sys.argv[1].startswith("-"):
-        prepare(os.path.abspath(sys.argv[1]))
-    else:
-        sys.exit(__doc__)
+    main(sys.argv[1:])
