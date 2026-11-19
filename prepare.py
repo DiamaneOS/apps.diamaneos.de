@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Prepare and check the work tree of our catalog. It lists only apps signed with our keys.
+"""Prepare and check the work tree of the DiamaneOS catalog. It lists only apps signed with the project's keys.
 
 ./prepare.py WORK                  copy the inventory, scripts and static files into WORK
 ./prepare.py --check WORK KEY.pub PUBLISHED [--allow-drop PACKAGE[:CHANNEL]]...
                                    after generate.py: the signed catalog verifies with apps.0's public
                                    key and lists only the inventory, with its signers, single APKs, a
                                    label in each version and an icon for each app on the main screen.
-                                   It is newer than PUBLISHED, our signed catalog as served, keeps its
+                                   It is newer than PUBLISHED, the signed catalog as served, keeps its
                                    packages and offers each channel no lower version than it, unless
                                    --allow-drop names the package or PACKAGE:CHANNEL
 ./prepare.py --check --first WORK KEY.pub
                                    the same for a first release, which has no published catalog
 
-The inventory is apps/packages/*/common-props.toml. GrapheneOS's apps are not in our catalog: the App
-Store reads GrapheneOS's own catalog for them, mirrored by grapheneos-mirror.py, and refuses our
-packages from it. From our catalog it refuses any package not signed with our keys, or that
+The inventory is apps/packages/*/common-props.toml. GrapheneOS's apps are not in this catalog: the App Store
+reads GrapheneOS's own catalog for them, mirrored by grapheneos-mirror.py, and refuses the project's packages
+from it. From this catalog it refuses any package not signed with the project's keys, or that
 GrapheneOS's catalog lists (Catalogs.kt).
 """
 
@@ -32,23 +32,23 @@ REPO = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = ["generate.py", "compress-apks", "process-static", "import-apks.py"]
 # Debian's OpenBSD signify. Debian's plain signify is an unrelated mail tool.
 SIGNIFY = "/usr/bin/signify-openbsd"
-# The App Store refuses an older catalog of ours on a phone without one (Catalog.DiamaneOS.minTimestamp
+# The App Store refuses an older catalog on a phone without one (Catalog.DiamaneOS.minTimestamp
 # in Catalogs.kt). Raised with it at each rebase.
 MIN_TIME = 1_792_550_000
 CATALOG = "apps/metadata.1.0.sjson"
-# Our app signing certificates (DIAMANEOS_SIGNERS in Catalogs.kt): App Store, Camera, Auditor.
+# The DiamaneOS app signing certificates (DIAMANEOS_SIGNERS in Catalogs.kt): App Store, Camera, Auditor.
 SIGNERS = {
     "559ffb104edd9386a39d512063cb7458c5ec0e29c9b52a91068ce950dd768a47",
     "285a091a913f1485ce16f280f06b2609dc1af6cca786e45b6f5356aa7e86fa61",
     "427bfd360586b829475f37abffd2548d93db3618e45c994de416469ef04bc2ec",
 }
-# Other makers' apps our catalog offers (PINNED_PACKAGES in Catalogs.kt): each name with its signer lineage, the
+# Other makers' apps the catalog offers (PINNED_PACKAGES in Catalogs.kt): each name with its signer lineage, the
 # SHA-256 of each certificate the maker's key has had, oldest first, and the system features every version of
 # it must list (the App Store offers a version only on an OS build that declares them). The inventory lists
 # the one certificate that signs the APK, as apksigner verify prints it, and it must be one of the lineage.
 # com.fps.camera: Fairphone's own camera app, signed by TCL, whose key was rotated once. Its APK is signed with
-# the second certificate. It needs the camera algorithm service that FP6 builds declare with
-# de.diamaneos.fairphone_camera.
+# the second certificate. It needs the camera algorithm service. An OS build for a device that ships this app
+# declares it with de.diamaneos.fairphone_camera.
 # The last value is the prefix of one further feature each version must list. It names the version's APK: the
 # prefix and the first 16 hex characters of the APK's SHA-256. The app loads stock libraries of the OS build,
 # so an OS build declares that feature only for the APK of the stock release it was built from, and a phone is
@@ -85,19 +85,19 @@ def load_inventory():
             inventory[name] = tomllib.load(f)
     problems = sorted(name for name in inventory if name.lower() in EXCLUDED)
     problems += [name + " is not source DiamaneOS" for name, p in inventory.items() if p.get("source") != "DiamaneOS"]
-    problems += [name + " needs one of our signers" for name, p in inventory.items()
+    problems += [name + " needs one of the DiamaneOS signers" for name, p in inventory.items()
                  if name not in PINNED and (len(p.get("signatures", [])) != 1 or p["signatures"][0] not in SIGNERS)]
     problems += [name + " needs one signer of its pinned lineage" for name, p in inventory.items()
                  if name in PINNED and (len(p.get("signatures", [])) != 1 or p["signatures"][0] not in PINNED[name][0])]
     # A label here replaces the APK's own label in every version (replace_label in generate.py). Only a pinned
-    # maker's app may have one. Our own apps show the name their APK carries.
+    # maker's app may have one. DiamaneOS apps show the name their APK carries.
     problems += [name + " may not replace its APK's label" for name, p in inventory.items()
                  if "label" in p and name not in PINNED]
     problems += [name + " needs a label that is a non-empty string" for name, p in inventory.items()
                  if "label" in p and name in PINNED and (not isinstance(p["label"], str) or not p["label"].strip())]
     problems += [name + " uses the original-package system" for name, p in inventory.items() if "originalPackage" in p]
     if problems:
-        raise Exception("not our catalog's packages: " + ", ".join(problems))
+        raise Exception("not packages of the DiamaneOS catalog: " + ", ".join(problems))
     return inventory
 
 
@@ -219,7 +219,7 @@ def offered(package):
 
 
 def published_problems(catalog, published, allowed):
-    """The catalog is newer than the one we last published, keeps each of its packages and offers a phone on each
+    """The catalog is newer than the one last published, keeps each of its packages and offers a phone on each
     channel no lower version code. Only --allow-drop PACKAGE or PACKAGE:CHANNEL lets one go, and each one must be used."""
     problems, used = [], set()
     if not isinstance(published.get("time"), int) or not isinstance(catalog.get("time"), int) \
@@ -265,12 +265,12 @@ def check(work, key, published, allowed=()):
     for name, package in sorted(packages.items()):
         listed = inventory.get(name)
         if listed is None:
-            problems.append(name + " is not ours")
+            problems.append(name + " is not a DiamaneOS package")
         elif package.get("source") != "DiamaneOS" or "originalPackage" in package:
-            problems.append(name + ": not as the App Store takes our packages")
+            problems.append(name + ": not as the App Store takes DiamaneOS packages")
         elif sorted(package["signatures"]) != sorted(listed["signatures"]):
             problems.append(name + ": signers differ from the inventory")
-        # The App Store parses each APK from our catalog for its signer, and a split does not parse.
+        # The App Store parses each APK from the DiamaneOS catalog for its signer, and a split does not parse.
         elif any(v.get("apks") != ["base.apk"] for v in package.get("variants", {}).values()):
             problems.append(name + ": not a single APK")
         # A pinned maker's app is offered only on OS builds with its features, made for that version's APK.
@@ -298,7 +298,7 @@ def check(work, key, published, allowed=()):
         print(problem)
     if problems:
         sys.exit(1)
-    print("our catalog lists only our signed packages and its pinned makers' apps: " + ", ".join(sorted(packages)))
+    print("the catalog lists only packages signed with the project's keys and its pinned makers' apps: " + ", ".join(sorted(packages)))
 
 
 def main(args):

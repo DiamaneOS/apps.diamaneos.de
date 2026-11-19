@@ -2,21 +2,21 @@
 
 apps.diamaneos.de serves two signed catalogs. The App Store checks each with its own key, and a package can come from only one of them.
 
-- Our catalog (`metadata.1.0.sjson`), made with GrapheneOS's generator and signed with our offline catalog key. It lists only packages signed with our App Store, Camera or Auditor key (source `DiamaneOS`): the App Store, Camera, CameraProcessor and Auditor.
-- GrapheneOS's catalog (`grapheneos/metadata.1.0.sjson`), served unchanged with its APKs. The App Store checks it with GrapheneOS's catalog key and takes only GrapheneOS's packages from it, without our packages, GrapheneOS's Info app (its release news) and GrapheneOS's Auditor.
+- The DiamaneOS catalog (`metadata.1.0.sjson`), made with GrapheneOS's generator and signed with an offline catalog key. It lists only packages signed with the project's App Store, Camera or Auditor key (source `DiamaneOS`): the App Store, Camera, CameraProcessor and Auditor.
+- GrapheneOS's catalog (`grapheneos/metadata.1.0.sjson`), served unchanged with its APKs. The App Store checks it with GrapheneOS's catalog key and takes only GrapheneOS's packages from it, without DiamaneOS packages, GrapheneOS's Info app (its release news) and GrapheneOS's Auditor.
 
 Camera and CameraProcessor update together (`LINKED` in `prepare.py`): Camera names CameraProcessor as its dependency, so an update of Camera takes a newer CameraProcessor in the same install, and both share the group `camera`, one release channel.
 
-Our catalog also offers other makers' apps that need a DiamaneOS device's own parts, each pinned by name to its signer lineage in `prepare.py` (`PINNED`) and in the App Store's `Catalogs.kt` (`PINNED_PACKAGES`). Every version of such an app lists the system features it needs in its `props.toml`, and the App Store offers a version only on an OS build that declares them all. The only one is Fairphone's own camera app (`com.fps.camera`, signed by TCL). Its versions list `features = ["de.diamaneos.fairphone_camera"]`, which only FP6 builds with its camera algorithm service declare.
+The DiamaneOS catalog also offers other makers' apps that need a device's own parts, each pinned by name to its signer lineage in `prepare.py` (`PINNED`) and in the App Store's `Catalogs.kt` (`PINNED_PACKAGES`). Every version of such an app lists the system features it needs in its `props.toml`, and the App Store offers a version only on an OS build that declares them all. The only one is Fairphone's own camera app (`com.fps.camera`, signed by TCL). Its versions list `features = ["de.diamaneos.fairphone_camera"]`, which only Fairphone 6 builds with its camera algorithm service declare.
 
-## Building our catalog
+## Building the DiamaneOS catalog
 
 The scripts need signify, apksigner and aapt2 from build tools 37 (generate.py reads apksigner's newer output), zopfli, brotli and GNU parallel.
 
-1. `./prepare.py WORK` copies our inventory (`apps/packages`), the scripts and static files into a work tree.
-2. In WORK, `./import-apks.py` adds our signed builds. Set each version's channel in its `channel.toml`. A version's `props.toml` may set only `channel`, `features`, `requiredSystemFeatures` and `staticDeps`.
+1. `./prepare.py WORK` copies the inventory (`apps/packages`), the scripts and static files into a work tree.
+2. In WORK, `./import-apks.py` adds the signed DiamaneOS builds. Set each version's channel in its `channel.toml`. A version's `props.toml` may set only `channel`, `features`, `requiredSystemFeatures` and `staticDeps`.
 3. In WORK, `./generate.py` writes the catalog and checks every APK's signer against the inventory. It signs with `apps.0.sec` when that key is in WORK.
-4. `./prepare.py --check WORK apps.0.pub PUBLISHED` checks the signed catalog with our catalog key's public key and confirms that the App Store can read it and that it lists only our packages with their signers, each as a single APK with a label in each version, and that each app on the main screen has a WebP icon of at most 1 MiB. It refuses a catalog whose time is before the App Store's floor for our catalog (`minTimestamp` in Catalogs.kt), as from a signing machine with a wrong clock. PUBLISHED is our signed `metadata.1.0.sjson` as apps.diamaneos.de serves it, checked with the same key: the new catalog must be newer, keep each of its packages and offer a phone on each channel the same or a higher version code, picked as the App Store picks it, unless `--allow-drop PACKAGE[:CHANNEL]` names it. A first release has no published catalog and takes `--first` instead.
+4. `./prepare.py --check WORK apps.0.pub PUBLISHED` checks the signed catalog with the catalog key's public key and confirms that the App Store can read it and that it lists only DiamaneOS packages with their signers, each as a single APK with a label in each version, and that each app on the main screen has a WebP icon of at most 1 MiB. It refuses a catalog whose time is before the App Store's floor for the DiamaneOS catalog (`minTimestamp` in Catalogs.kt), as from a signing machine with a wrong clock. PUBLISHED is the signed `metadata.1.0.sjson` as apps.diamaneos.de serves it, checked with the same key: the new catalog must be newer, keep each of its packages and offer a phone on each channel the same or a higher version code, picked as the App Store picks it, unless `--allow-drop PACKAGE[:CHANNEL]` names it. A first release has no published catalog and takes `--first` instead.
 5. `deploy-static` in WORK publishes the tree.
 
 ## GrapheneOS's catalog
@@ -29,7 +29,7 @@ Icons are not in the signed catalog. They are fetched again only with a new cata
 
 Run the tests with `python3 -m unittest discover -s tests` (Python 3.11 or newer). One test compares the package sets with Catalogs.kt in an AppStore checkout next to this one, or at `APPSTORE_SOURCE`.
 
-`tests/fuzz` holds Atheris fuzz targets with property checks for the mirror, our catalog's check, generate.py and import-apks.py. The tests above do not use them. `tests/fuzz/regress.tar.gz` is a small merged corpus of every target. Replay it on the builder whenever the mirror, the catalog check, generate.py or import-apks.py changes.
+`tests/fuzz` holds Atheris fuzz targets with property checks for the mirror, the catalog check, generate.py and import-apks.py. The tests above do not use them. `tests/fuzz/regress.tar.gz` is a small merged corpus of every target. Replay it on the builder whenever the mirror, the catalog check, generate.py or import-apks.py changes.
 
 The targets need Linux on x86_64 with Python 3.13, the only wheel `tests/fuzz/requirements.txt` allows, and OpenBSD signify. On Debian 13 without `python3-venv`, signify or root, as on the builder, set up a work folder once:
 

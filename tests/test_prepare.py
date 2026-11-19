@@ -1,4 +1,4 @@
-"""prepare.py: our catalog's work tree holds only our packages, and --check refuses anything else."""
+"""prepare.py: the DiamaneOS catalog's work tree holds only the project's packages, and --check refuses anything else."""
 import base64
 import contextlib
 import hashlib
@@ -64,7 +64,7 @@ class PrepareTests(unittest.TestCase):
         (self.work / 'apps/metadata.1.json').write_text(json.dumps({'time': 1, 'packages': self.ours()}))
 
     def ours(self):
-        """Our catalog as generate.py writes it. The icons are those prepare() copies."""
+        """The DiamaneOS catalog as generate.py writes it. The icons are those prepare() copies."""
         packages = {}
         for n, p in self.prepare.load_inventory().items():
             packages[n] = {'source': 'DiamaneOS', 'signatures': p['signatures'], 'variants': {}}

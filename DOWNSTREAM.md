@@ -2,7 +2,7 @@
 
 - Upstream provenance is in [UPSTREAM.json](UPSTREAM.json). The upstream MIT license is kept in [LICENSE](LICENSE).
 - `prepare.py`, `grapheneos-mirror.py`, `systemd/` and `grapheneos-apps.0.pub` are DiamaneOS additions. The key is GrapheneOS's catalog key, taken from its App Store source.
-- `prepare.py --check` compares our new catalog with the published one: it must be newer, and a package dropped or a channel's offered version set back needs `--allow-drop`.
+- `prepare.py --check` compares the new DiamaneOS catalog with the published one: it must be newer, and a package dropped or a channel's offered version set back needs `--allow-drop`.
 - `generate.py` also reads a label written in the manifest (aapt2 prints it only in its `application:` line), as the App Store needs a label in each version, and stops when a version has none.
 - `generate.py` stops on aapt2 output it cannot read, such as a quote inside a label, and keeps a label or versionName with `:` or `=` whole.
 - `generate.py` keeps no cache files for the signer and aapt2's output, so every run checks each APK's signer against the inventory.
@@ -14,9 +14,9 @@
 - `generate.py` makes no delta from a version that cannot apply one (`NO_DELTA_SOURCES`): App Store 3701.
 - `compress-apks` and `process-static` stop when brotli or zopfli fails, so no empty compressed file is listed or served.
 - `import-apks.py` refuses a package name or version code from aapt2 that is not one, as both name the directory it copies to.
-- `apps/packages` holds only our own packages. GrapheneOS's packages and their inherited version files were removed: they come from GrapheneOS's catalog.
+- `apps/packages` holds only DiamaneOS packages. GrapheneOS's packages and their inherited version files were removed: they come from GrapheneOS's catalog.
 - Packages keep their own signing identities. Catalog authentication does not replace APK signature checks.
-- Our inventory turns off legacy fs-verity sidecars. Android 17 uses APK Signature Scheme v4 sidecars when supplied, alongside the APK's own signature and the catalog's hashes.
+- The DiamaneOS inventory turns off legacy fs-verity sidecars. Android 17 uses APK Signature Scheme v4 sidecars when supplied, alongside the APK's own signature and the catalog's hashes.
 - Publication keeps the package versions that current and previous signed catalogs list. Serving roots hold verified files and signed metadata, never private keys.
 - `deploy-static` calls the protected executable named by `DIAMANEOS_PUBLICATION_TRANSPORT`, which handles authentication, targets and remote installation.
 - The Debian deployment entry point is [DiamaneOS/infrastructure](https://github.com/DiamaneOS/infrastructure/tree/main/debian).

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""prepare.py --check on catalogs signed with a throwaway key: the check passes only for our catalog, and
-only for one that does not move back from the published catalog.
+"""prepare.py --check on catalogs signed with a throwaway key: the check passes only for the DiamaneOS catalog,
+and only for one that does not move back from the published catalog.
 
 An input is a JSON object {"catalog": ..., "published": ..., "allow": [...]}. Both catalogs are signed with
 real signify and checked through main(), as --check WORK KEY.pub PUBLISHED with an --allow-drop for each
@@ -64,7 +64,7 @@ def catalog_problems(catalog):
     for name, package in catalog['packages'].items():
         listed = INVENTORY.get(name)
         if listed is None or not isinstance(package, dict):
-            problems.append('not ours ' + name)
+            problems.append('not a DiamaneOS package ' + name)
             continue
         if package.get('source') != 'DiamaneOS' or 'originalPackage' in package:
             problems.append('source ' + name)
